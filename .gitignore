@@ -1,0 +1,8 @@
+# Personal data lives in a separate PRIVATE repo cloned into data/ — never commit it here.
+data/
+autostart/
+*.json.tmp
+*.backup.json
+__pycache__/
+*.log
+.DS_Store

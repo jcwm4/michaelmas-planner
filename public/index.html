@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://api.github.com; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Selwyn · Michaelmas Planner</title>
+  <link rel="icon" type="image/svg+xml" href="selwyn-arms.svg">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#4f1220">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Planner">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="crest" src="selwyn-arms.svg" alt="Selwyn College arms" width="40" height="43">
+      <div>
+        <div class="brand-kicker">Selwyn College · Engineering</div>
+        <div class="brand-title">Michaelmas Planner</div>
+        <div class="brand-sub" id="termLabel"></div>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <a href="#dashboard" data-tab="dashboard">Dashboard</a>
+      <a href="#timetable" data-tab="timetable">Timetable</a>
+      <a href="#supervisions" data-tab="supervisions">Supervisions</a>
+      <a href="#papers" data-tab="papers">Examples Papers</a>
+      <a href="#labs" data-tab="labs">Labs</a>
+      <a href="#tasks" data-tab="tasks">Planner</a>
+      <a href="#settings" data-tab="settings">Settings</a>
+    </nav>
+    <div class="save-status" id="saveStatus"></div>
+  </header>
+
+  <div class="conflict-bar" id="conflictBar" hidden></div>
+  <main id="view"></main>
+
+  <div class="modal" id="modal" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
