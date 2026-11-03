@@ -229,7 +229,7 @@ async function load() {
     }
   } else {
     try {
-      const r = await fetch('/api/data', { cache: 'no-store' });
+      const r = await fetch('api/data', { cache: 'no-store' });
       if (!r.ok) throw new Error(r.status);
       const d = await r.json();
       backend = 'server'; state = d && d.settings ? d : DEFAULT_STATE();
@@ -322,7 +322,7 @@ async function flushSave() {
     const text = JSON.stringify(state, null, 1);
     if (backend === 'github') ghSha = await ghWrite(gh, text, ghSha);
     else {
-      const r = await fetch('/api/data', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: text });
+      const r = await fetch('api/data', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: text });
       if (!r.ok) throw new Error(`server error ${r.status}`);
     }
     cachePut();
