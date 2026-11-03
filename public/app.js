@@ -897,15 +897,18 @@ function labInfo(o) {
   const key = occKey(o), rec = labRec(key);
   const tasks = linkedTasks('lab', key);
   const open = tasks.filter(t => !t.done).sort(byDue);
-  const nowM = nowMin(), isPast = o.date < iso(today()) || (o.date === iso(today()) && toMin(o.e.end) <= nowM);
+  const nowM = nowMin(), isToday = o.date === iso(today());
+  const isPast = o.date < iso(today()) || (isToday && toMin(o.e.end) <= nowM);
+  const started = isPast || (isToday && toMin(o.e.start) <= nowM);
   let label, cls;
   if (rec.status === 'done') { label = 'Completed'; cls = 'ok'; }
   else if (rec.status === 'followup') {
     if (tasks.length && !open.length) { label = 'Follow-up done'; cls = 'ok'; }
     else { label = open.length ? `Follow-up due ${fmtDate(parseISO(open[0].due || o.date))}` : 'Needs follow-up — add a deadline'; cls = 'warn'; }
   } else if (isPast) { label = 'Not marked'; cls = 'todo'; }
+  else if (started) { label = 'In progress'; cls = 'upcoming'; }
   else { label = 'Upcoming'; cls = 'upcoming'; }
-  return { key, rec, tasks, open, isPast, label, cls };
+  return { key, rec, tasks, open, isPast, started, label, cls };
 }
 function labButtons(key, status) {
   const b = (st, text, title) => `<button type="button" class="seg ${status === st ? 'on ' + (st === 'done' ? 'ok' : 'warn') : ''}" data-action="lab-status" data-key="${esc(key)}" data-status="${st}" title="${title}" aria-pressed="${status === st}">${text}</button>`;
@@ -959,8 +962,8 @@ function evRow(o, { showDate = false, extra = '' } = {}) {
   const c = course(o.e.courseId);
   const isToday = o.date === iso(today());
   const nm = nowMin();
-  const past = o.d < today() || (isToday && toMin(o.e.end) <= nm);
-  const now = isToday && toMin(o.e.start) <= nm && nm < toMin(o.e.end);
+  const past = o.d < today() || (isToday && toMin(o.e.end) <= nm) || (o.e.type === 'lab' && labInfo(o).cls === 'ok');
+  const now = !past && isToday && toMin(o.e.start) <= nm && nm < toMin(o.e.end);
   const meta = [TYPES[o.e.type], c.name, o.e.location, o.e.who].filter(Boolean).map(esc).join(' · ');
   return `<li class="${past ? 'past' : ''} ${now ? 'now' : ''}" ${evAttr(o)}>
     <div class="ev-time">${showDate ? `<div>${fmtDate(o.d)}</div>` : ''}${esc(o.e.start)}–${esc(o.e.end)}</div>
@@ -1082,10 +1085,12 @@ function viewTimetable() {
       const titleLines = Math.max(1, Math.min(3, avail - Math.min(meta.length, metaRoom)));
       const metaShown = meta.slice(0, Math.max(0, avail - titleLines));
       const tip = [o.e.title, `${o.e.start}–${o.e.end}`, o.e.location, o.e.who, course(o.e.courseId).name].filter(Boolean).join('\n');
-      return `<div class="tt-ev ${o.e.type} ${o.e.done ? 'is-done' : ''}" ${evAttr(o)} style="--c:${c.color};top:${top}px;height:${h}px;left:calc(${col * w}% + 2px);width:calc(${w}% - 4px)"
+      const labSt = o.e.type === 'lab' ? labInfo(o) : null;
+      const isDone = o.e.done || (labSt && labSt.cls === 'ok');
+      return `<div class="tt-ev ${o.e.type} ${isDone ? 'is-done' : ''} ${labSt && labSt.cls === 'warn' ? 'needs-follow' : ''}" ${evAttr(o)} style="--c:${c.color};top:${top}px;height:${h}px;left:calc(${col * w}% + 2px);width:calc(${w}% - 4px)"
         title="${esc(tip)}">
         ${o.e.link ? extLink(o.e.link, '↗', 'tt-link') : ''}
-        <div class="t" style="-webkit-line-clamp:${titleLines}">${esc(o.e.title)}</div>
+        <div class="t" style="-webkit-line-clamp:${titleLines}">${isDone && labSt ? '✓ ' : labSt && labSt.cls === 'warn' ? '✎ ' : ''}${esc(o.e.title)}</div>
         ${metaShown.map(x => `<div class="m">${esc(x)}</div>`).join('')}
       </div>`;
     }).join('');
@@ -1272,7 +1277,7 @@ function allLabs() {
 function dashLabs() {
   const labs = allLabs();
   const unmarked = labs.filter(l => l.cls === 'todo');
-  const next = labs.find(l => !l.isPast);
+  const next = labs.find(l => l.cls === 'upcoming');
   const follow = state.tasks.filter(t => t.link && t.link.kind === 'lab' && !t.done).sort(byDue).slice(0, 5);
   return `<section class="panel">
     <div class="section-head"><h2>Labs</h2><span class="spacer"></span><a href="#labs" class="small">All labs →</a></div>
@@ -1290,19 +1295,19 @@ function labRow(l) {
     <div class="lab-main"><div class="ev-title">${esc(o.e.title)}</div>
       <div class="small muted">${esc(o.e.location || '')}${o.e.link ? ' · ' + extLink(o.e.link) : ''}${l.rec.notes ? ' · 📝 notes' : ''}${l.tasks.length ? ` · ${l.tasks.length - l.open.length}/${l.tasks.length} tasks done` : ''}</div></div>
     <span class="lab-pill ${l.cls}">${esc(l.label)}</span>
-    ${l.isPast || l.rec.status ? labButtons(l.key, l.rec.status) : ''}
+    ${l.started || l.rec.status ? labButtons(l.key, l.rec.status) : ''}
   </div>`;
 }
 
 function viewLabs() {
   const labs = allLabs();
-  const past = labs.filter(l => l.isPast);
+  const past = labs.filter(l => l.isPast || l.rec.status);
   const n = c => labs.filter(l => l.cls === c).length;
   const filters = { active: 'Upcoming & needs attention', all: 'All sessions', todo: 'Needs attention', upcoming: 'Upcoming', followup: 'Write-ups / follow-up', done: 'Completed' };
   const shown = labs.filter(l => ui.labFilter === 'all' ? true
-    : ui.labFilter === 'active' ? (!l.isPast || l.cls === 'todo' || l.cls === 'warn')
+    : ui.labFilter === 'active' ? ((!l.isPast && l.cls !== 'ok') || l.cls === 'todo' || l.cls === 'warn')
     : ui.labFilter === 'todo' ? (l.cls === 'todo' || l.cls === 'warn')
-    : ui.labFilter === 'upcoming' ? !l.isPast
+    : ui.labFilter === 'upcoming' ? l.cls === 'upcoming'
     : ui.labFilter === 'followup' ? l.rec.status === 'followup'
     : l.cls === 'ok');
   const weeks = [...new Set(shown.map(l => termWeek(l.o.d)))];

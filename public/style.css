@@ -260,6 +260,9 @@ input:focus, select:focus, textarea:focus {
   background: color-mix(in srgb, var(--danger) 9%, var(--panel)); z-index: 2;
 }
 .tt-ev.is-done { opacity: .5; border-color: var(--muted); }
+.tt-ev.lab.is-done { opacity: .45; filter: grayscale(1); }
+.tt-ev.lab.is-done .t { text-decoration: line-through; }
+.tt-ev.needs-follow { box-shadow: 0 0 0 1.5px var(--warn, #c77c02); }
 
 /* ---------- tables ---------- */
 .table-wrap { overflow-x: auto; }
