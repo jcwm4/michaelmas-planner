@@ -906,7 +906,7 @@ function labInfo(o) {
     if (tasks.length && !open.length) { label = 'Follow-up done'; cls = 'ok'; }
     else { label = open.length ? `Follow-up due ${fmtDate(parseISO(open[0].due || o.date))}` : 'Needs follow-up — add a deadline'; cls = 'warn'; }
   } else if (isPast) { label = 'Not marked'; cls = 'todo'; }
-  else if (started) { label = 'In progress'; cls = 'upcoming'; }
+  else if (started) { label = 'In progress'; cls = 'live'; }
   else { label = 'Upcoming'; cls = 'upcoming'; }
   return { key, rec, tasks, open, isPast, started, label, cls };
 }
@@ -1087,10 +1087,11 @@ function viewTimetable() {
       const tip = [o.e.title, `${o.e.start}–${o.e.end}`, o.e.location, o.e.who, course(o.e.courseId).name].filter(Boolean).join('\n');
       const labSt = o.e.type === 'lab' ? labInfo(o) : null;
       const isDone = o.e.done || (labSt && labSt.cls === 'ok');
-      return `<div class="tt-ev ${o.e.type} ${isDone ? 'is-done' : ''} ${labSt && labSt.cls === 'warn' ? 'needs-follow' : ''}" ${evAttr(o)} style="--c:${c.color};top:${top}px;height:${h}px;left:calc(${col * w}% + 2px);width:calc(${w}% - 4px)"
+      return `<div class="tt-ev ${o.e.type} ${isDone ? 'is-done' : ''} ${labSt && labSt.cls === 'warn' ? 'needs-follow' : ''} ${labSt && labSt.cls === 'live' ? 'is-live' : ''}" ${evAttr(o)} style="--c:${c.color};top:${top}px;height:${h}px;left:calc(${col * w}% + 2px);width:calc(${w}% - 4px)"
         title="${esc(tip)}">
         ${o.e.link ? extLink(o.e.link, '↗', 'tt-link') : ''}
         <div class="t" style="-webkit-line-clamp:${titleLines}">${isDone && labSt ? '✓ ' : labSt && labSt.cls === 'warn' ? '✎ ' : ''}${esc(o.e.title)}</div>
+        ${labSt && labSt.cls === 'live' ? '<div class="live-tag">● In progress</div>' : ''}
         ${metaShown.map(x => `<div class="m">${esc(x)}</div>`).join('')}
       </div>`;
     }).join('');
@@ -1277,14 +1278,16 @@ function allLabs() {
 function dashLabs() {
   const labs = allLabs();
   const unmarked = labs.filter(l => l.cls === 'todo');
+  const live = labs.find(l => l.cls === 'live');
   const next = labs.find(l => l.cls === 'upcoming');
   const follow = state.tasks.filter(t => t.link && t.link.kind === 'lab' && !t.done).sort(byDue).slice(0, 5);
   return `<section class="panel">
     <div class="section-head"><h2>Labs</h2><span class="spacer"></span><a href="#labs" class="small">All labs →</a></div>
     ${follow.length ? `<h3 class="sub">Write-ups / follow-up due</h3>${follow.map(taskRow).join('')}` : ''}
     ${unmarked.length ? `<h3 class="sub">Not marked yet (${unmarked.length})</h3>${unmarked.slice(-4).reverse().map(labRow).join('')}` : ''}
+    ${live ? `<h3 class="sub">Happening now</h3>${labRow(live)}` : ''}
     ${next ? `<h3 class="sub">Next lab</h3>${labRow(next)}` : ''}
-    ${!follow.length && !unmarked.length && !next ? '<div class="empty">No labs.</div>' : ''}
+    ${!follow.length && !unmarked.length && !next && !live ? '<div class="empty">No labs.</div>' : ''}
   </section>`;
 }
 
@@ -1307,7 +1310,7 @@ function viewLabs() {
   const shown = labs.filter(l => ui.labFilter === 'all' ? true
     : ui.labFilter === 'active' ? ((!l.isPast && l.cls !== 'ok') || l.cls === 'todo' || l.cls === 'warn')
     : ui.labFilter === 'todo' ? (l.cls === 'todo' || l.cls === 'warn')
-    : ui.labFilter === 'upcoming' ? l.cls === 'upcoming'
+    : ui.labFilter === 'upcoming' ? (l.cls === 'upcoming' || l.cls === 'live')
     : ui.labFilter === 'followup' ? l.rec.status === 'followup'
     : l.cls === 'ok');
   const weeks = [...new Set(shown.map(l => termWeek(l.o.d)))];
@@ -1317,7 +1320,7 @@ function viewLabs() {
     <div class="stat"><div class="v">${n('ok')}<span class="muted small"> / ${past.length}</span></div><div class="l">Completed (of past labs)</div></div>
     <div class="stat warn"><div class="v">${n('warn')}</div><div class="l">Write-up / follow-up pending</div></div>
     <div class="stat todo"><div class="v">${n('todo')}</div><div class="l">Past labs not marked</div></div>
-    <div class="stat"><div class="v">${n('upcoming')}</div><div class="l">Upcoming</div></div>
+    <div class="stat"><div class="v">${n('upcoming') + n('live')}</div><div class="l">Upcoming${n('live') ? ` <span class="lab-pill live">${n('live')} in progress</span>` : ''}</div></div>
   </div>
   <div class="grid-cards labs-grid">
     <section class="panel">
