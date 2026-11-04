@@ -722,8 +722,8 @@ function releasesBetween(from, to) {
 function relChip(r, withDate = false) {
   const c = course(r.p.courseId);
   const what = 'issued';
-  return `<div class="tt-rel ${r.kind}" data-paper="${r.p.id}" style="--c:${c.color}" title="${esc(shortPaper(r.p))} ${what}${withDate ? '' : ' — click to open'}">
-    <span class="ico">📄</span><span class="txt">${withDate ? `<strong>${fmtDate(parseISO(r.date))}</strong> · ` : ''}${esc(shortPaper(r.p))} ${what}</span></div>`;
+  return `<a class="tt-rel ${r.kind}" href="${esc(PAPERS_URL)}" target="_blank" rel="noopener noreferrer" style="--c:${c.color}" title="${esc(shortPaper(r.p))} ${what} — open on Moodle">
+    <span class="ico">📄</span><span class="txt">${withDate ? `<strong>${fmtDate(parseISO(r.date))}</strong> · ` : ''}${esc(shortPaper(r.p))} ${what}</span><span class="ico">↗</span></a>`;
 }
 function releaseCell(p) {
   const d = x => x ? fmtDate(parseISO(x)) : '';

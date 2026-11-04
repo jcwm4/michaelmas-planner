@@ -498,6 +498,7 @@ a.btn { text-decoration: none; display: inline-block; }
   background: color-mix(in srgb, var(--c) 14%, var(--panel)); border-left: 3px solid var(--c);
   transition: background var(--t);
 }
+a.tt-rel { color: inherit; text-decoration: none; }
 .tt-rel:hover { background: color-mix(in srgb, var(--c) 26%, var(--panel)); }
 .tt-rel .ico { font-size: 10px; flex: none; }
 .tt-rel .txt { overflow: hidden; text-overflow: ellipsis; }
