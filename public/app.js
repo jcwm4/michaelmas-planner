@@ -486,7 +486,10 @@ function closeModal() {
   const m = $('#modal'); m.hidden = true; m.innerHTML = ''; modalRefresh = null;
   if (state) render();
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal').hidden) closeModal(); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (viewer) closePdf(); else if (!$('#modal').hidden) closeModal();
+});
 $('#modal').addEventListener('mousedown', e => { if (e.target.id === 'modal') closeModal(); });
 
 const courseOptions = (blank = true) => [...(blank ? [['', '—']] : []), ...state.courses.map(c => [c.id, c.name])];
@@ -559,6 +562,7 @@ function openPaperForm(p, preset = {}) {
       <label class="f">Set due date from a supervision<select name="link"></select></label>
       <label class="f">Issued${draft.issuedNote ? ` <span class="hint">${esc(draft.issuedNote)}</span>` : ''}<input type="date" name="issued" value="${esc(draft.issued)}"></label>
       <label class="f">Status<select name="status">${opt(Object.entries(STATUS), draft.status)}</select></label>
+      ${isNew ? '' : `<div class="full pdf-attach" id="pdfAttach"></div>`}
 
       <div class="full q-head">
         <strong>Questions</strong>
@@ -684,6 +688,36 @@ function openPaperForm(p, preset = {}) {
     closeModal(); save(); render();
   });
 
+  const pdfRow = () => {
+    const box = $('#pdfAttach', form);
+    if (!box) return;
+    box.innerHTML = draft.pdf
+      ? `<span>📄 <strong>${esc(draft.pdfName || 'Paper PDF')}</strong></span><span class="spacer"></span>
+         <button type="button" class="btn sm primary" data-qact="pdf-view">View paper</button>
+         <label class="btn sm">Replace<input type="file" accept="application/pdf,.pdf" data-qact="pdf-file" hidden></label>
+         <button type="button" class="btn sm" data-qact="pdf-remove">Remove</button>`
+      : `<span class="muted">No PDF attached.</span><span class="spacer"></span>
+         <label class="btn sm">📎 Attach PDF<input type="file" accept="application/pdf,.pdf" data-qact="pdf-file" hidden></label>`;
+  };
+  form.addEventListener('change', async e => {
+    if (e.target.dataset.qact !== 'pdf-file' || !e.target.files[0]) return;
+    const box = $('#pdfAttach', form);
+    box.innerHTML = '<span class="muted">Uploading…</span>';
+    try {
+      const f = await uploadPdf(p, e.target.files[0]);
+      Object.assign(p, f); Object.assign(draft, f); save();
+    } catch (err) { alert(`Couldn't attach the PDF: ${err.message}`); }
+    pdfRow();
+  });
+  form.addEventListener('click', e => {
+    const a = e.target.dataset.qact;
+    if (a === 'pdf-view') openPdf(p);
+    if (a === 'pdf-remove' && confirm('Remove the PDF from this paper?')) {
+      for (const o of [p, draft]) { delete o.pdf; delete o.pdfSha; delete o.pdfName; }
+      save(); pdfRow();
+    }
+  });
+  pdfRow();
   renderQs();
   fillLinks(draft.courseId);
   if (!isNew) wireLinkedTasks($('#ltWrap', form), () => ({ courseId: form.elements.courseId.value, due: form.elements.due.value.slice(0, 10) }));
@@ -779,6 +813,7 @@ function toggleQ(btn, flag) {
   if (flag) q.flag = !q.flag; else q.done = !q.done;
   syncPaper(p, true); save();
   if (btn.closest('#modal') && modalRefresh) modalRefresh(); else render();
+  pdfStrip();
 }
 document.addEventListener('contextmenu', e => {
   const b = e.target.closest('[data-action="q-toggle"]');
@@ -885,6 +920,168 @@ function openSupModal(key) {
   });
   wireLinkedTasks($('#ltWrap', m), () => ({ courseId: o.e.courseId, due: o.date }));
 }
+
+/* ---------------- examples paper PDFs ----------------
+   PDFs live in the private data repo (papers/<paperId>.pdf). They are fetched with the
+   same access key as the data, kept in this browser's cache keyed by the file's hash,
+   and drawn with pdf.js so every page shows on iPhone too. */
+const PDF_CACHE = 'planner-pdfs';
+const pdfCacheKey = p => `https://planner.invalid/${p.pdf}?v=${p.pdfSha || ''}`;
+const pdfApiUrl = path => ghUrl({ ...gh, path });
+
+async function pdfBytes(p) {
+  let cache = null;
+  try { cache = await caches.open(PDF_CACHE); const hit = await cache.match(pdfCacheKey(p)); if (hit) return await hit.arrayBuffer(); } catch { /* no Cache API */ }
+  let r;
+  if (backend === 'github') {
+    r = await fetch(`${pdfApiUrl(p.pdf)}?ref=${encodeURIComponent(gh.branch)}`, { cache: 'no-store', headers: {
+      Authorization: `Bearer ${gh.token}`, Accept: 'application/vnd.github.raw', 'X-GitHub-Api-Version': '2022-11-28' } });
+    if (!r.ok) throw ghError(r.status);
+  } else {
+    r = await fetch(`api/file?path=${encodeURIComponent(p.pdf)}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`couldn't load the PDF (${r.status})`);
+  }
+  const buf = await r.arrayBuffer();
+  if (cache) {
+    try {   // drop older versions of this file, keep the new one
+      for (const k of await cache.keys()) if (k.url.startsWith(`https://planner.invalid/${p.pdf}?`)) await cache.delete(k);
+      await cache.put(pdfCacheKey(p), new Response(buf.slice(0), { headers: { 'Content-Type': 'application/pdf' } }));
+    } catch { /* storage full: just don't cache */ }
+  }
+  return buf;
+}
+
+let pdfjsLib = null;
+async function loadPdfJs() {
+  if (!pdfjsLib) {
+    pdfjsLib = await import('./vendor/pdfjs/pdf.min.mjs');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('vendor/pdfjs/pdf.worker.min.mjs', location.href).href;
+  }
+  return pdfjsLib;
+}
+
+let viewer = null;   // { p, doc, zoom, io, el }
+function closePdf() {
+  if (!viewer) return;
+  viewer.io && viewer.io.disconnect();
+  viewer.doc && viewer.doc.destroy();
+  viewer.el.remove();
+  document.body.classList.remove('pdf-open');
+  viewer = null;
+}
+function pdfStrip() {
+  if (!viewer) return;
+  const p = state.papers.find(x => x.id === viewer.p.id);
+  const s = $('.pdf-qs', viewer.el);
+  if (p && s) s.innerHTML = p.questions && p.questions.length ? qStrip(p) : '';
+}
+async function openPdf(p) {
+  closePdf();
+  const el = document.createElement('div');
+  el.id = 'pdfView';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  el.setAttribute('aria-label', paperLabel(p));
+  el.innerHTML = `<div class="pdf-bar">
+      <button type="button" class="btn sm" data-pdf="close" aria-label="Close">✕</button>
+      <div class="pdf-title"><strong>${paperLabel(p)}</strong><span class="small">${esc(course(p.courseId).name)}</span></div>
+      <span class="spacer"></span>
+      <button type="button" class="btn sm" data-pdf="out" aria-label="Zoom out">−</button>
+      <button type="button" class="btn sm" data-pdf="fit" aria-label="Fit width">Fit</button>
+      <button type="button" class="btn sm" data-pdf="in" aria-label="Zoom in">+</button>
+      <button type="button" class="btn sm" data-pdf="save" title="Save / open in another app">⇩</button>
+    </div>
+    <div class="pdf-qs"></div>
+    <div class="pdf-pages"><div class="pdf-msg">Loading ${paperLabel(p)}…</div></div>`;
+  document.body.appendChild(el);
+  document.body.classList.add('pdf-open');
+  viewer = { p, doc: null, zoom: 1, io: null, el, buf: null };
+  const me = viewer;
+  pdfStrip();
+  $('[data-pdf="close"]', el).focus();
+  el.addEventListener('click', e => {
+    const b = e.target.closest('[data-pdf]');
+    if (!b) return;
+    const a = b.dataset.pdf;
+    if (a === 'close') closePdf();
+    if (a === 'in' || a === 'out' || a === 'fit') {
+      me.zoom = a === 'fit' ? 1 : Math.min(3, Math.max(0.5, me.zoom * (a === 'in' ? 1.25 : 0.8)));
+      if (me.doc) layoutPages(me);
+    }
+    if (a === 'save' && me.buf) {
+      const url = URL.createObjectURL(new Blob([me.buf], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url; link.download = p.pdfName || `${[p.number, p.title].filter(Boolean).join(' - ')}.pdf`;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+  });
+  try {
+    const [lib, buf] = await Promise.all([loadPdfJs(), pdfBytes(p)]);
+    if (viewer !== me) return;
+    me.buf = buf;
+    me.doc = await lib.getDocument({ data: new Uint8Array(buf.slice(0)), isEvalSupported: false }).promise;
+    if (viewer !== me) { me.doc.destroy(); return; }
+    layoutPages(me);
+  } catch (err) {
+    if (viewer !== me) return;
+    $('.pdf-pages', el).innerHTML = `<div class="pdf-msg">Couldn't open this PDF: ${esc(err.message || String(err))}.<br>
+      ${navigator.onLine ? '' : "You're offline and it hasn't been opened on this device before. "}</div>`;
+  }
+}
+async function layoutPages(v) {
+  const box = $('.pdf-pages', v.el);
+  v.io && v.io.disconnect();
+  const width = Math.min(box.clientWidth - 16, 900) * v.zoom;
+  const first = await v.doc.getPage(1);
+  const base = first.getViewport({ scale: 1 });
+  box.innerHTML = Array.from({ length: v.doc.numPages }, (_, i) =>
+    `<div class="pdf-page" data-n="${i + 1}" style="width:${width}px;height:${width * base.height / base.width}px"><canvas></canvas></div>`).join('');
+  v.io = new IntersectionObserver(entries => entries.forEach(en => {
+    const div = en.target;
+    if (en.isIntersecting && !div.dataset.done) { div.dataset.done = '1'; drawPage(v, div, width); }
+    else if (!en.isIntersecting && div.dataset.done) {   // free memory for pages far off screen
+      delete div.dataset.done; const c = $('canvas', div); c.width = c.height = 0;
+    }
+  }), { root: box, rootMargin: '1200px 0px' });
+  box.querySelectorAll('.pdf-page').forEach(d => v.io.observe(d));
+}
+async function drawPage(v, div, width) {
+  try {
+    const page = await v.doc.getPage(+div.dataset.n);
+    const vp1 = page.getViewport({ scale: 1 });
+    const css = width / vp1.width;
+    div.style.height = `${vp1.height * css}px`;
+    // keep canvases within iOS memory limits
+    const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(8e6 / (vp1.width * vp1.height * css * css)));
+    const vp = page.getViewport({ scale: css * dpr });
+    const c = $('canvas', div);
+    c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+    c.style.width = `${width}px`; c.style.height = `${vp1.height * css}px`;
+    await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+  } catch { /* page closed mid-render */ }
+}
+
+/** Upload a PDF for paper p to the private repo. Returns the updated fields. */
+async function uploadPdf(p, file) {
+  if (backend !== 'github') throw new Error('attaching PDFs needs the GitHub connection');
+  if (file.size > 25e6) throw new Error('that file is over 25 MB');
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  const path = `papers/${p.id}.pdf`;
+  const url = pdfApiUrl(path);
+  const put = sha => ghFetch(gh, url, { method: 'PUT', body: JSON.stringify({
+    message: `Attach PDF: ${[p.number, p.title].filter(Boolean).join(' — ')}`, content: btoa(bin), branch: gh.branch, ...(sha ? { sha } : {}) }) });
+  let r = await put(p.pdf === path ? p.pdfSha : null);
+  if (r.status === 409 || r.status === 422) {   // a file is already there: replace it
+    const meta = await ghFetch(gh, `${url}?ref=${encodeURIComponent(gh.branch)}`);
+    if (meta.ok) r = await put((await meta.json()).sha);
+  }
+  if (!r.ok) throw ghError(r.status);
+  return { pdf: path, pdfSha: (await r.json()).content.sha, pdfName: file.name };
+}
+const pdfBtn = (p, cls = 'btn sm') => p.pdf ? `<button type="button" class="${cls} pdf-btn" data-action="view-pdf" data-id="${p.id}" aria-label="View ${paperLabel(p)}">📄 View</button>` : '';
 
 /* ---------------- labs ---------------- */
 const labRec = key => state.labs[key] || { status: '', notes: '' };
@@ -1047,7 +1244,7 @@ function viewDashboard() {
       ${papers.length ? `<ul class="ev-list">${papers.map(p => {
         const c = course(p.courseId);
         return `<li class="static"><div class="ev-bar" style="background:${c.color}"></div>
-          <div class="ev-main"><div class="ev-title row" style="gap:8px">${paperLabel(p)}<span class="spacer"></span><button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></div>
+          <div class="ev-main"><div class="ev-title row" style="gap:8px">${paperLabel(p)}<span class="spacer"></span>${pdfBtn(p)}<button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></div>
           <div class="ev-meta">${esc(c.name)} · due ${fmtDue(p.due)} ${relDue(p.due)}</div>
           ${qStrip(p)}
           </div></li>`;
@@ -1195,7 +1392,7 @@ function viewSupervisions() {
       <div class="row"><span class="when">${fmtDate(o.d)}, ${esc(o.e.start)}</span><span class="spacer"></span><span class="muted small">Week ${termWeek(o.d)}</span></div>
       <div>${esc(o.e.title)}</div>
       <div class="muted small">${[c.name, o.e.location, o.e.who].filter(Boolean).map(esc).join(' · ')}</div>
-      ${linked.map(p => `<div class="sup-paper"><div class="small row" style="gap:6px"><span><strong>${paperLabel(p)}</strong> <span class="status-${p.status}">· ${STATUS[p.status]}</span></span><span class="spacer"></span><button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></div>${qStrip(p)}${flagList(p)}</div>`).join('')}
+      ${linked.map(p => `<div class="sup-paper"><div class="small row" style="gap:6px"><span><strong>${paperLabel(p)}</strong> <span class="status-${p.status}">· ${STATUS[p.status]}</span></span><span class="spacer"></span>${pdfBtn(p)}<button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></div>${qStrip(p)}${flagList(p)}</div>`).join('')}
       ${note ? `<div class="note-preview small">📝 ${esc(note.length > 90 ? note.slice(0, 90) + '…' : note)}</div>` : ''}
       ${tasks.length ? `<div class="small">${openT.length ? `☐ ${openT.length} open task${openT.length > 1 ? 's' : ''}` : '✓ tasks done'}</div>` : ''}
       <div class="card-hint small">Open for papers, notes &amp; tasks →</div>
@@ -1227,7 +1424,7 @@ function viewPapers() {
       <td>${qStrip(p)}${(() => { const n = linkedTasks('paper', p.id).filter(x => !x.done).length; return n ? `<div class="small muted">☐ ${n} task${n > 1 ? 's' : ''}</div>` : ''; })()}</td>
       <td><select data-action="paper-status" data-id="${p.id}" class="status-${p.status}">
         ${Object.entries(STATUS).map(([k, l]) => `<option value="${k}"${k === p.status ? ' selected' : ''}>${l}</option>`).join('')}</select></td>
-      <td><button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></td>
+      <td>${pdfBtn(p)}<button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></td>
     </tr>`;
   }).join('');
 
@@ -1527,6 +1724,7 @@ document.addEventListener('click', e => {
       'add-supervision': () => openEventForm(null, { type: 'supervision', title: 'Supervision' }),
       'add-paper': () => openPaperForm(null),
       'q-toggle': () => toggleQ(actEl, e.altKey),
+      'view-pdf': () => { const p = state.papers.find(x => x.id === actEl.dataset.id); if (p) openPdf(p); },
       'edit-paper': () => { const p = state.papers.find(x => x.id === actEl.dataset.id); if (p) openPaperForm(p); },
       'lab-pre': () => { applyLabPre(actEl); render(); },
       'lab-status': () => {

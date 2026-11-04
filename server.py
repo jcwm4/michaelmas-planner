@@ -38,6 +38,18 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path.split("?")[0] == "/api/data":
             body = DATA.read_bytes() if DATA.exists() else b"null"
             return self._send_json(200, body)
+        if self.path.startswith("/api/file?"):
+            from urllib.parse import parse_qs, urlsplit
+            rel = parse_qs(urlsplit(self.path).query).get("path", [""])[0]
+            f = (DATA_DIR / rel).resolve()
+            if not (rel.startswith("papers/") and f.suffix == ".pdf" and f.parent == (DATA_DIR / "papers").resolve() and f.is_file()):
+                return self._send_json(404, b'{"error":"not found"}')
+            body = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
         return super().do_GET()
 
     def do_PUT(self):

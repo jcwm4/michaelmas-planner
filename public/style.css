@@ -614,3 +614,32 @@ a.tt-rel { color: inherit; text-decoration: none; }
   max-width: 1400px; margin: 14px auto 0; padding: 10px 16px; border-radius: 12px;
   background: color-mix(in srgb, var(--warn) 16%, var(--panel)); border: 1px solid var(--warn);
 }
+
+/* ---------- examples paper PDF viewer ---------- */
+body.pdf-open { overflow: hidden; }
+#pdfView {
+  position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column;
+  background: #3b3436; animation: fade-in .18s var(--ease);
+}
+.pdf-bar {
+  display: flex; align-items: center; gap: 6px; padding: 8px 10px;
+  padding-top: max(8px, env(safe-area-inset-top)); background: #4f1220; color: #fff;
+  border-bottom: 3px solid var(--gold);
+}
+.pdf-bar .btn { min-width: 34px; background: rgba(255, 255, 255, .12); color: #fff; border-color: rgba(255, 255, 255, .28); box-shadow: none; }
+.pdf-bar .btn:hover { background: rgba(255, 255, 255, .22); }
+.pdf-title { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.pdf-title strong { font-family: Georgia, serif; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pdf-title .small { color: var(--gold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pdf-qs { background: var(--panel); padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.pdf-qs:empty { display: none; }
+.pdf-pages {
+  flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; padding: 12px 8px max(12px, env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.pdf-page { background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); flex: none; }
+.pdf-page canvas { display: block; }
+.pdf-msg { color: #f2e9dc; margin: 40px 16px; text-align: center; max-width: 420px; }
+.pdf-attach { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 9px; }
+.pdf-attach label.btn { cursor: pointer; }
+@media (max-width: 640px) { .pdf-bar [data-pdf="fit"] { display: none; } }

@@ -50,11 +50,11 @@ def load():
     return data
 
 
-def save(data, message="Update from import script"):
+def save(data, message="Update from import script", extra=()):
     DATA.parent.mkdir(exist_ok=True)
     DATA.write_text(json.dumps(data, indent=1, ensure_ascii=False))
     if _is_repo():
-        _git("add", DATA.name)
+        _git("add", DATA.name, *extra)
         if _git("diff", "--cached", "--quiet").returncode == 0:
             print("(no changes to upload)")
             return
