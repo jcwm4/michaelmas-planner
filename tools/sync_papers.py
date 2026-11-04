@@ -13,7 +13,6 @@ are skipped, so it is safe to re-run whenever you add files.
 """
 import hashlib
 import re
-import shutil
 import sys
 from pathlib import Path
 
@@ -66,18 +65,12 @@ def find_paper(papers, folder: str, num):
     return None
 
 
-def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    dry = "--dry-run" in sys.argv
-    root = Path(args[0]).expanduser() if args else DEFAULT_DIR
-    if not root.is_dir():
-        sys.exit(f"Folder not found: {root}")
-    data = load()
+def sync_papers(data, root, dry=False):
+    """Attach new/changed PDFs from root to data["papers"]. Returns (added lines, unchanged count, unmatched)."""
     PAPERS_DIR.mkdir(exist_ok=True)
     added, same, unmatched = [], 0, []
     for pdf in sorted(root.rglob("*.pdf")):
-        folder = pdf.parent.name
-        p = find_paper(data["papers"], folder, paper_number(pdf.stem))
+        p = find_paper(data["papers"], pdf.parent.name, paper_number(pdf.stem))
         if not p:
             unmatched.append(pdf.relative_to(root))
             continue
@@ -89,8 +82,19 @@ def main():
         rel = f"papers/{p['id']}.pdf"
         added.append(f"{pdf.relative_to(root)}  →  {p['number']} — {p['title']}")
         if not dry:
-            shutil.copyfile(pdf, DATA.parent / rel)
+            (DATA.parent / rel).write_bytes(body)
             p.update(pdf=rel, pdfSha=sha, pdfName=pdf.name)
+    return added, same, unmatched
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    dry = "--dry-run" in sys.argv
+    root = Path(args[0]).expanduser() if args else DEFAULT_DIR
+    if not root.is_dir():
+        sys.exit(f"Folder not found: {root}")
+    data = load()
+    added, same, unmatched = sync_papers(data, root, dry)
     for line in added:
         print("  +", line)
     print(f"{len(added)} new/updated, {same} unchanged.")

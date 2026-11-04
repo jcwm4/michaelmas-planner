@@ -33,12 +33,13 @@ python3 tools/import_paper_rota.py
 
 `python3 server.py` still runs a local copy at http://localhost:8000 if you ever need it.
 
-## Examples paper PDFs
+## PDFs: examples papers, data books, lecture handouts
 
 PDFs are kept in the **private** data repo (`papers/`), never in this public repo.
 They're viewed in the app with a bundled copy of [pdf.js](https://github.com/mozilla/pdf.js) (Apache-2.0, `public/vendor/pdfjs/`).
 
-- Add/refresh from your folder (one sub-folder per course):
-  `python3 tools/sync_papers.py ["~/Documents/IA Engineering/Example Papers"]`
-  Only new or changed files are uploaded; it lists any it couldn't match.
+- Add/refresh everything (examples papers, data books, lecture handouts) from
+  `~/Documents/IA Engineering`: double-click **Sync IA Engineering.command**, or run
+  `python3 tools/sync_library.py` (`--dry-run` to preview). Only new or changed files are
+  uploaded; files deleted from Data Books / Lecture Handouts are removed from the planner.
 - Or attach one in the app: ✎ Edit on a paper → 📎 Attach PDF.

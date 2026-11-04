@@ -926,25 +926,25 @@ function openSupModal(key) {
    same access key as the data, kept in this browser's cache keyed by the file's hash,
    and drawn with pdf.js so every page shows on iPhone too. */
 const PDF_CACHE = 'planner-pdfs';
-const pdfCacheKey = p => `https://planner.invalid/${p.pdf}?v=${p.pdfSha || ''}`;
+const pdfCacheKey = d => `https://planner.invalid/${d.path}?v=${d.sha || ''}`;
 const pdfApiUrl = path => ghUrl({ ...gh, path });
 
-async function pdfBytes(p) {
+async function pdfBytes(p) {   // p = { path, sha }
   let cache = null;
   try { cache = await caches.open(PDF_CACHE); const hit = await cache.match(pdfCacheKey(p)); if (hit) return await hit.arrayBuffer(); } catch { /* no Cache API */ }
   let r;
   if (backend === 'github') {
-    r = await fetch(`${pdfApiUrl(p.pdf)}?ref=${encodeURIComponent(gh.branch)}`, { cache: 'no-store', headers: {
+    r = await fetch(`${pdfApiUrl(p.path)}?ref=${encodeURIComponent(gh.branch)}`, { cache: 'no-store', headers: {
       Authorization: `Bearer ${gh.token}`, Accept: 'application/vnd.github.raw', 'X-GitHub-Api-Version': '2022-11-28' } });
     if (!r.ok) throw ghError(r.status);
   } else {
-    r = await fetch(`api/file?path=${encodeURIComponent(p.pdf)}`, { cache: 'no-store' });
+    r = await fetch(`api/file?path=${encodeURIComponent(p.path)}`, { cache: 'no-store' });
     if (!r.ok) throw new Error(`couldn't load the PDF (${r.status})`);
   }
   const buf = await r.arrayBuffer();
   if (cache) {
     try {   // drop older versions of this file, keep the new one
-      for (const k of await cache.keys()) if (k.url.startsWith(`https://planner.invalid/${p.pdf}?`)) await cache.delete(k);
+      for (const k of await cache.keys()) if (k.url.startsWith(`https://planner.invalid/${p.path}?`)) await cache.delete(k);
       await cache.put(pdfCacheKey(p), new Response(buf.slice(0), { headers: { 'Content-Type': 'application/pdf' } }));
     } catch { /* storage full: just don't cache */ }
   }
@@ -960,7 +960,7 @@ async function loadPdfJs() {
   return pdfjsLib;
 }
 
-let viewer = null;   // { p, doc, zoom, io, el }
+let viewer = null;   // { d, doc, zoom, io, el }
 function closePdf() {
   if (!viewer) return;
   viewer.io && viewer.io.disconnect();
@@ -971,20 +971,25 @@ function closePdf() {
 }
 function pdfStrip() {
   if (!viewer) return;
-  const p = state.papers.find(x => x.id === viewer.p.id);
+  const p = viewer.d.paperId && state.papers.find(x => x.id === viewer.d.paperId);
   const s = $('.pdf-qs', viewer.el);
-  if (p && s) s.innerHTML = p.questions && p.questions.length ? qStrip(p) : '';
+  if (s) s.innerHTML = p && p.questions && p.questions.length ? qStrip(p) : '';
 }
-async function openPdf(p) {
+function openPdf(p) {
+  return openDoc({ path: p.pdf, sha: p.pdfSha, title: [p.number, p.title].filter(Boolean).join(' — '),
+    sub: course(p.courseId).name, fileName: p.pdfName, paperId: p.id });
+}
+/** d = { path, sha, title, sub, fileName, paperId? } */
+async function openDoc(d) {
   closePdf();
   const el = document.createElement('div');
   el.id = 'pdfView';
   el.setAttribute('role', 'dialog');
   el.setAttribute('aria-modal', 'true');
-  el.setAttribute('aria-label', paperLabel(p));
+  el.setAttribute('aria-label', d.title);
   el.innerHTML = `<div class="pdf-bar">
       <button type="button" class="btn sm" data-pdf="close" aria-label="Close">✕</button>
-      <div class="pdf-title"><strong>${paperLabel(p)}</strong><span class="small">${esc(course(p.courseId).name)}</span></div>
+      <div class="pdf-title"><strong>${esc(d.title)}</strong><span class="small">${esc(d.sub || '')}</span></div>
       <span class="spacer"></span>
       <button type="button" class="btn sm" data-pdf="out" aria-label="Zoom out">−</button>
       <button type="button" class="btn sm" data-pdf="fit" aria-label="Fit width">Fit</button>
@@ -992,10 +997,10 @@ async function openPdf(p) {
       <button type="button" class="btn sm" data-pdf="save" title="Save / open in another app">⇩</button>
     </div>
     <div class="pdf-qs"></div>
-    <div class="pdf-pages"><div class="pdf-msg">Loading ${paperLabel(p)}…</div></div>`;
+    <div class="pdf-pages"><div class="pdf-msg">Loading ${esc(d.title)}…</div></div>`;
   document.body.appendChild(el);
   document.body.classList.add('pdf-open');
-  viewer = { p, doc: null, zoom: 1, io: null, el, buf: null };
+  viewer = { d, doc: null, zoom: 1, io: null, el, buf: null };
   const me = viewer;
   pdfStrip();
   $('[data-pdf="close"]', el).focus();
@@ -1011,13 +1016,13 @@ async function openPdf(p) {
     if (a === 'save' && me.buf) {
       const url = URL.createObjectURL(new Blob([me.buf], { type: 'application/pdf' }));
       const link = document.createElement('a');
-      link.href = url; link.download = p.pdfName || `${[p.number, p.title].filter(Boolean).join(' - ')}.pdf`;
+      link.href = url; link.download = d.fileName || `${d.title}.pdf`;
       document.body.appendChild(link); link.click(); link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     }
   });
   try {
-    const [lib, buf] = await Promise.all([loadPdfJs(), pdfBytes(p)]);
+    const [lib, buf] = await Promise.all([loadPdfJs(), pdfBytes(d)]);
     if (viewer !== me) return;
     me.buf = buf;
     me.doc = await lib.getDocument({ data: new Uint8Array(buf.slice(0)), isEvalSupported: false }).promise;
@@ -1062,24 +1067,32 @@ async function drawPage(v, div, width) {
   } catch { /* page closed mid-render */ }
 }
 
-/** Upload a PDF for paper p to the private repo. Returns the updated fields. */
-async function uploadPdf(p, file) {
-  if (backend !== 'github') throw new Error('attaching PDFs needs the GitHub connection');
+/** Upload a file to the private repo at path; returns its new git sha. */
+async function uploadFile(path, file, message, knownSha) {
+  if (backend !== 'github') throw new Error('uploading files needs the GitHub connection');
   if (file.size > 25e6) throw new Error('that file is over 25 MB');
   const bytes = new Uint8Array(await file.arrayBuffer());
   let bin = '';
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  const path = `papers/${p.id}.pdf`;
   const url = pdfApiUrl(path);
   const put = sha => ghFetch(gh, url, { method: 'PUT', body: JSON.stringify({
-    message: `Attach PDF: ${[p.number, p.title].filter(Boolean).join(' — ')}`, content: btoa(bin), branch: gh.branch, ...(sha ? { sha } : {}) }) });
-  let r = await put(p.pdf === path ? p.pdfSha : null);
+    message, content: btoa(bin), branch: gh.branch, ...(sha ? { sha } : {}) }) });
+  let r = await put(knownSha || null);
   if (r.status === 409 || r.status === 422) {   // a file is already there: replace it
     const meta = await ghFetch(gh, `${url}?ref=${encodeURIComponent(gh.branch)}`);
     if (meta.ok) r = await put((await meta.json()).sha);
   }
   if (!r.ok) throw ghError(r.status);
-  return { pdf: path, pdfSha: (await r.json()).content.sha, pdfName: file.name };
+  return (await r.json()).content.sha;
+}
+async function deleteFile(path, sha) {
+  if (backend !== 'github' || !sha) return;
+  await ghFetch(gh, pdfApiUrl(path), { method: 'DELETE', body: JSON.stringify({ message: `Remove ${path}`, sha, branch: gh.branch }) }).catch(() => {});
+}
+async function uploadPdf(p, file) {
+  const path = `papers/${p.id}.pdf`;
+  const sha = await uploadFile(path, file, `Attach PDF: ${[p.number, p.title].filter(Boolean).join(' — ')}`, p.pdf === path ? p.pdfSha : null);
+  return { pdf: path, pdfSha: sha, pdfName: file.name };
 }
 const pdfBtn = (p, cls = 'btn sm') => p.pdf ? `<button type="button" class="${cls} pdf-btn" data-action="view-pdf" data-id="${p.id}" aria-label="View ${paperLabel(p)}">📄 View</button>` : '';
 
@@ -1599,7 +1612,133 @@ function viewSettings() {
 /* ================================================================
    RENDER + EVENTS
    ================================================================ */
-const VIEWS = { dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, tasks: viewTasks, settings: viewSettings };
+
+/* ---------------- library: lecture handouts & data books ---------------- */
+// handout folder name -> which timetabled lectures it belongs to
+const LECTURE_GROUPS = [
+  ['Circuit Analysis', /analysis of circuits/i, 'Analysis of Circuits and Devices'],
+  ['PPE', /physical principles/i, 'Physical Principles of Electronics'],
+  ['Digital Circuits', /digital/i],
+  ['Dimensional Analysis', /dimensional analysis/i],
+  ['Materials', /materials/i],
+  ['Maths', /mathematical methods|\bmaths\b/i, 'Mathematical Methods'],
+  ['Mechanical Vibrations', /vibration/i],
+  ['Mechanics', /\bmechanics\b/i],
+  ['Structures', /structures/i],
+  ['Thermofluids', /thermo/i],
+];
+const libDocs = (kind, group) => (state.library || []).filter(d => d.kind === kind && (group == null || d.group === group));
+const docRef = d => ({ path: d.path, sha: d.sha, title: d.title, sub: d.kind === 'databook' ? 'Data book' : `${groupName(d.group)} · lecture handout`, fileName: d.name });
+const fmtSize = n => n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
+const groupRule = g => LECTURE_GROUPS.find(r => r[0].toLowerCase() === String(g).toLowerCase());
+const groupName = g => { const r = groupRule(g); return r && r[2] ? `${r[2]}` : g; };
+const fileTitle = name => name.replace(/\.pdf$/i, '').replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+function lectureGroups() {
+  const s = state.settings;
+  const lectures = state.events.filter(e => e.type === 'lecture');
+  const names = [...new Set([...(state.handoutGroups || []), ...libDocs('handout').map(d => d.group)])];
+  const groups = names.map(g => {
+    const r = groupRule(g);
+    return { g, events: lectures.filter(e => r ? r[1].test(e.title) : e.title === g) };
+  });
+  // timetabled lectures with no handout folder get their own card
+  const used = new Set(groups.flatMap(x => x.events));
+  for (const e of lectures) {
+    if (used.has(e)) continue;
+    let grp = groups.find(x => x.g === e.title);
+    if (!grp) groups.push(grp = { g: e.title, events: [] });
+    grp.events.push(e);
+  }
+  const from = today(), to = addDays(windowStart(+s.numWeeks + 1), 6), nowM = nowMin(), t = iso(today());
+  const occ = occurrences(from, to).filter(o => o.e.type === 'lecture');
+  for (const x of groups) {
+    const mine = occ.filter(o => x.events.includes(o.e) && (o.date > t || toMin(o.e.end) > nowM));
+    x.next = mine[0] || null;
+    x.left = mine.length;
+    x.docs = libDocs('handout', x.g);
+    x.courseId = (x.events[0] && x.events[0].courseId) || '';
+    x.who = [...new Set(x.events.map(e => e.who).filter(Boolean))].join(', ');
+    x.link = (x.events.find(e => e.link) || {}).link || '';
+    x.code = ((x.events[0] && x.events[0].title.match(/^\d\w{1,3}\b/)) || [''])[0];
+  }
+  return groups.sort((a, b) => (!!b.next - !!a.next) || (a.next && b.next ? (a.next.date + a.next.e.start).localeCompare(b.next.date + b.next.e.start) : 0)
+    || (b.docs.length - a.docs.length) || a.g.localeCompare(b.g));
+}
+
+function docRow(d) {
+  return `<div class="doc-row" data-action="view-doc" data-path="${esc(d.path)}" role="button" tabindex="0" title="${esc(d.name || d.title)}">
+    <span class="doc-ico" aria-hidden="true">${d.kind === 'databook' ? '📘' : '📄'}</span>
+    <span class="doc-title">${esc(d.title)}</span>
+    <span class="doc-size small muted">${d.size ? fmtSize(d.size) : ''}</span>
+    <button type="button" class="icon-btn" data-action="doc-rename" data-path="${esc(d.path)}" aria-label="Rename ${esc(d.title)}" title="Rename">✎</button>
+    <button type="button" class="icon-btn" data-action="doc-remove" data-path="${esc(d.path)}" aria-label="Remove ${esc(d.title)}" title="Remove">✕</button>
+  </div>`;
+}
+const uploadBtn = (kind, group, label) => `<label class="btn sm upload-btn">${label}<input type="file" accept="application/pdf,.pdf" multiple hidden data-lib-upload="${kind}" data-group="${esc(group)}"></label>`;
+
+function viewLectures() {
+  const groups = lectureGroups();
+  const card = x => {
+    const c = course(x.courseId);
+    const n = x.next;
+    return `<section class="panel lec-card" style="--c:${c.color || 'var(--gold)'}">
+      <div class="lec-head"><div><div class="small muted">${esc(x.code || c.name || '')}</div><h2>${esc(groupName(x.g))}</h2></div>
+        <span class="spacer"></span>${x.link ? extLink(x.link, 'Moodle ↗', 'btn sm') : ''}</div>
+      <div class="lec-meta small">
+        ${x.who ? `<span>👤 ${esc(x.who)}</span>` : ''}
+        ${n ? `<span>⏭ Next: <strong>${n.date === iso(today()) ? 'Today' : fmtDate(n.d)} ${esc(n.e.start)}</strong>${n.e.location ? ' · ' + esc(n.e.location) : ''}</span>
+              <span class="muted">${x.left} lecture${x.left === 1 ? '' : 's'} left this term</span>`
+          : `<span class="muted">${x.events.length ? 'No more lectures this term' : 'Not lectured this term'}</span>`}
+      </div>
+      <div class="doc-list">${x.docs.length ? x.docs.map(docRow).join('') : '<div class="empty small">No handouts yet.</div>'}</div>
+      <div class="row">${uploadBtn('handout', x.g, '📎 Add handout')}</div>
+    </section>`;
+  };
+  const active = groups.filter(x => x.next || x.docs.length);
+  const later = groups.filter(x => !x.next && !x.docs.length);
+  return `
+  <div class="section-head"><h2>Lectures</h2><span class="spacer"></span>
+    <span class="small muted">${libDocs('handout').length} handouts · tap one to open it</span></div>
+  <div class="grid-cards">${active.map(card).join('')}</div>
+  ${later.length ? `<details class="panel later"><summary><strong>Other courses</strong> <span class="small muted">— not lectured this term / no handouts yet (${later.length})</span></summary>
+    <div class="grid-cards" style="margin-top:14px">${later.map(card).join('')}</div></details>` : ''}`;
+}
+
+function viewDatabooks() {
+  const docs = libDocs('databook');
+  return `<section class="panel">
+    <div class="section-head"><h2>Data books</h2><span class="spacer"></span>${uploadBtn('databook', 'Data books', '📎 Add data book')}</div>
+    <div class="doc-list books">${docs.length ? docs.map(docRow).join('') : '<div class="empty">No data books yet. Add them here, or put them in your Data Books folder and sync.</div>'}</div>
+  </section>`;
+}
+
+async function libUpload(input) {
+  const kind = input.dataset.libUpload, group = input.dataset.group;
+  const files = [...input.files];
+  input.value = '';
+  if (!files.length) return;
+  const slug = s => s.toLowerCase().replace(/\.pdf$/, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'file';
+  state.library = state.library || [];
+  for (const f of files) {
+    const path = `library/${kind}s/${kind === 'handout' ? slug(group) + '/' : ''}${slug(f.name)}.pdf`;
+    const existing = state.library.find(d => d.path === path);
+    setStatus(`Uploading ${f.name}…`);
+    try {
+      const sha = await uploadFile(path, f, `Add ${kind}: ${f.name}`, existing && existing.sha);
+      if (existing) Object.assign(existing, { sha, name: f.name, size: f.size });
+      else state.library.push({ id: path, kind, group, title: fileTitle(f.name), path, sha, name: f.name, size: f.size, src: 'app' });
+      save(); render();
+    } catch (err) { alert(`Couldn't upload ${f.name}: ${err.message}`); }
+  }
+  setStatus('Synced ✓');
+}
+document.addEventListener('change', e => { if (e.target.dataset && e.target.dataset.libUpload) libUpload(e.target); });
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.doc-row')) { e.preventDefault(); e.target.click(); }
+});
+
+const VIEWS = { dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
 const currentTab = () => { const h = location.hash.slice(1); return VIEWS[h] ? h : 'dashboard'; };
 
 function render() {
@@ -1724,6 +1863,17 @@ document.addEventListener('click', e => {
       'add-supervision': () => openEventForm(null, { type: 'supervision', title: 'Supervision' }),
       'add-paper': () => openPaperForm(null),
       'q-toggle': () => toggleQ(actEl, e.altKey),
+      'view-doc': () => { const d = (state.library || []).find(x => x.path === actEl.dataset.path); if (d) openDoc(docRef(d)); },
+      'doc-rename': () => {
+        const d = (state.library || []).find(x => x.path === actEl.dataset.path);
+        const t = d && prompt('Rename', d.title);
+        if (t && t.trim()) { d.title = t.trim(); save(); render(); }
+      },
+      'doc-remove': () => {
+        const d = (state.library || []).find(x => x.path === actEl.dataset.path);
+        if (!d || !confirm(`Remove "${d.title}" from the planner?` + (d.src === 'folder' ? '\n\nIt will come back next time you sync unless you also delete it from your IA Engineering folder.' : ''))) return;
+        state.library = state.library.filter(x => x !== d); save(); render(); deleteFile(d.path, d.sha);
+      },
       'view-pdf': () => { const p = state.papers.find(x => x.id === actEl.dataset.id); if (p) openPdf(p); },
       'edit-paper': () => { const p = state.papers.find(x => x.id === actEl.dataset.id); if (p) openPaperForm(p); },
       'lab-pre': () => { applyLabPre(actEl); render(); },

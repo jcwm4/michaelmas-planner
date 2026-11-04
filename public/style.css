@@ -643,3 +643,25 @@ body.pdf-open { overflow: hidden; }
 .pdf-attach { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 9px; }
 .pdf-attach label.btn { cursor: pointer; }
 @media (max-width: 640px) { .pdf-bar [data-pdf="fit"] { display: none; } }
+
+/* ---------- lectures & data books ---------- */
+.lec-card { border-top: 3px solid var(--c); display: flex; flex-direction: column; gap: 10px; }
+.lec-head { display: flex; align-items: flex-start; gap: 10px; }
+.lec-head h2 { margin: 2px 0 0; font-size: 1.15rem; }
+.lec-meta { display: flex; flex-direction: column; gap: 3px; color: var(--text); }
+.doc-list { display: flex; flex-direction: column; gap: 6px; }
+.doc-list.books { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 8px; }
+.doc-row {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--panel); cursor: pointer; transition: background var(--t), border-color var(--t), transform var(--t);
+}
+.doc-row:hover, .doc-row:focus-visible { background: var(--line-soft); border-color: color-mix(in srgb, var(--gold) 60%, var(--line)); outline: none; }
+.doc-row:active { transform: scale(.99); }
+.doc-ico { font-size: 18px; flex: none; }
+.doc-title { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.doc-size { flex: none; }
+.doc-row .icon-btn { flex: none; border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 4px 6px; border-radius: 6px; font-size: 13px; opacity: .55; }
+.doc-row .icon-btn:hover { opacity: 1; background: var(--line); color: var(--text); }
+.upload-btn { cursor: pointer; }
+details.later > summary { cursor: pointer; list-style: revert; }
+@media (hover: none) { .doc-row .icon-btn { opacity: .8; padding: 8px; } }

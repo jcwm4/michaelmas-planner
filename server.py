@@ -42,7 +42,8 @@ class Handler(SimpleHTTPRequestHandler):
             from urllib.parse import parse_qs, urlsplit
             rel = parse_qs(urlsplit(self.path).query).get("path", [""])[0]
             f = (DATA_DIR / rel).resolve()
-            if not (rel.startswith("papers/") and f.suffix == ".pdf" and f.parent == (DATA_DIR / "papers").resolve() and f.is_file()):
+            allowed = [(DATA_DIR / d).resolve() for d in ("papers", "library")]
+            if not (f.suffix == ".pdf" and f.is_file() and any(f.is_relative_to(a) for a in allowed)):
                 return self._send_json(404, b'{"error":"not found"}')
             body = f.read_bytes()
             self.send_response(200)
