@@ -271,6 +271,7 @@ function migrate() {
   }
 }
 /** Safe external link (only http/https). */
+const PAPERS_URL = 'https://www.vle.cam.ac.uk/course/view.php?id=94562';   // Moodle page with all examples papers
 function extLink(url, text = 'Moodle ↗', cls = 'ext-link') {
   if (!/^https?:\/\//i.test(url || '')) return '';
   const label = /vle\.cam\.ac\.uk/i.test(url) ? text : text.replace('Moodle', 'Link');
@@ -549,7 +550,7 @@ function openPaperForm(p, preset = {}) {
   const m = $('#modal');
   const opt = (pairs, val) => pairs.map(([k, l]) => `<option value="${esc(k)}"${String(k) === String(val) ? ' selected' : ''}>${esc(l)}</option>`).join('');
   m.innerHTML = `<div class="modal-card wide" role="dialog" aria-modal="true">
-    <h2>${isNew ? 'Add examples paper' : 'Examples paper'}</h2>
+    <div class="row"><h2 style="margin:0">${isNew ? 'Add examples paper' : 'Examples paper'}</h2><span class="spacer"></span>${extLink(PAPERS_URL, 'Examples papers on Moodle ↗', 'btn sm')}</div>
     <form novalidate>
       <label class="f">Course<select name="courseId">${opt(courseOptions(), draft.courseId)}</select></label>
       <label class="f">Paper<input type="text" name="number" value="${esc(draft.number)}" placeholder="e.g. Examples Paper 3"></label>
@@ -1026,7 +1027,7 @@ function viewDashboard() {
       }).join('')}</ul>` : '<div class="empty">No supervisions in the next two weeks.</div>'}
     </section>
     <section class="panel">
-      <div class="section-head"><h2>Examples papers to do</h2><span class="spacer"></span><a href="#papers" class="small">All papers →</a></div>
+      <div class="section-head"><h2>Examples papers to do</h2><span class="spacer"></span>${extLink(PAPERS_URL, 'Moodle ↗', 'small')}<a href="#papers" class="small">All papers →</a></div>
       ${(() => { const r = releasesBetween(t, addDays(t, 6)); return r.length ? `<h3 class="sub">Papers out in the next 7 days</h3><div class="rel-list">${r.map(x => relChip(x, true)).join('')}</div><h3 class="sub">To do</h3>` : ''; })()}
       ${papers.length ? `<ul class="ev-list">${papers.map(p => {
         const c = course(p.courseId);
@@ -1221,6 +1222,7 @@ function viewPapers() {
       <select data-action="paper-filter"><option value="outstanding"${ui.paperFilter === 'outstanding' ? ' selected' : ''}>Outstanding</option><option value="all"${ui.paperFilter === 'all' ? ' selected' : ''}>All papers</option></select>
       <select data-action="paper-course"><option value="">All courses</option>${state.courses.map(c => `<option value="${c.id}"${c.id === ui.paperCourse ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
       <span class="spacer"></span>
+      ${extLink(PAPERS_URL, 'Examples papers on Moodle ↗', 'btn')}
       <button class="btn primary" data-action="add-paper">+ Add paper</button></div>
     <p class="small muted" style="margin-top:0">Tap a number to tick that question · right-click, ⌥-click or press-and-hold to flag one you struggled with · use ✎ Edit for question count, notes, flags &amp; tasks.</p>
     ${rows ? `<div class="table-wrap"><table><thead><tr><th>Course</th><th>Paper</th><th>Released</th><th>Due</th><th>Progress</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
