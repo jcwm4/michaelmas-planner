@@ -890,7 +890,7 @@ function openSupModal(key) {
 const labRec = key => state.labs[key] || { status: '', notes: '' };
 function setLab(key, patch) {
   const r = { ...labRec(key), ...patch };
-  if (!r.status && !r.notes) delete state.labs[key]; else state.labs[key] = r;
+  if (!r.status && !r.notes && !r.pre) delete state.labs[key]; else state.labs[key] = r;
   save();
 }
 /** Overall state of a lab session for display. */
@@ -909,11 +909,20 @@ function labInfo(o) {
   } else if (isPast) { label = 'Not marked'; cls = 'todo'; }
   else if (started) { label = 'In progress'; cls = 'live'; }
   else { label = 'Upcoming'; cls = 'upcoming'; }
-  return { key, rec, tasks, open, isPast, started, label, cls };
+  const preDue = rec.pre === 'required' && !isPast;   // pre-work still to do before the lab
+  return { key, rec, tasks, open, isPast, started, label, cls, preDue };
 }
 function labButtons(key, status) {
   const b = (st, text, title) => `<button type="button" class="seg ${status === st ? 'on ' + (st === 'done' ? 'ok' : 'warn') : ''}" data-action="lab-status" data-key="${esc(key)}" data-status="${st}" title="${title}" aria-pressed="${status === st}">${text}</button>`;
   return `<div class="seg-group">${b('done', '✓ Completed', 'Lab completed, nothing more to do')}${b('followup', '✎ Write-up / follow-up', 'Lab done but needs a write-up or follow-up work')}</div>`;
+}
+function labPreButtons(key, pre) {
+  const b = (st, text, title, on) => `<button type="button" class="seg ${pre === st ? 'on ' + on : ''}" data-action="lab-pre" data-key="${esc(key)}" data-pre="${st}" title="${title}" aria-pressed="${pre === st}">${text}</button>`;
+  return `<div class="seg-group">${b('required', '📋 Pre-work required', 'This lab has pre-work to do beforehand', 'warn')}${b('done', '✓ Pre-work done', 'Pre-work finished', 'ok')}</div>`;
+}
+function applyLabPre(btn) {
+  const key = btn.dataset.key, v = btn.dataset.pre;
+  setLab(key, { pre: labRec(key).pre === v ? '' : v });   // clicking the active option clears it
 }
 function openLabModal(key) {
   const o = findOcc(key);
@@ -928,10 +937,14 @@ function openLabModal(key) {
     <p class="muted">${fmtDate(o.d)}, ${esc(o.e.start)}–${esc(o.e.end)}${o.e.location ? ' · ' + esc(o.e.location) : ''} · Week ${termWeek(o.d)}</p>
     <h3>Status <span class="lab-pill ${info.cls}">${esc(info.label)}</span></h3>
     ${labButtons(key, info.rec.status)}
+    ${!info.isPast || info.rec.pre ? `<h3>Pre-work ${info.preDue ? '<span class="lab-pill warn">To do</span>' : info.rec.pre === 'done' ? '<span class="lab-pill ok">Done</span>' : ''}</h3>
+    ${labPreButtons(key, info.rec.pre)}
+    ${info.preDue ? '<p class="small muted">Add the pre-work below as a task with a deadline to see it on your calendar.</p>' : ''}` : ''}
     ${info.rec.status === 'followup' ? '<p class="small muted">Add the write-up / follow-up work below with its deadline. Give it a time and it appears on your calendar.</p>' : ''}
     <h3>${info.rec.status === 'followup' ? 'Write-up & follow-up work' : 'Tasks'}</h3>
     <div id="ltWrap">${ltHTML('lab', key, info.rec.status === 'followup' && !info.tasks.length
       ? { title: `Write-up: ${o.e.title}`, due: iso(addDays(o.d, 7)), time: '17:00' }
+      : info.preDue && !info.tasks.length ? { title: `Pre-work: ${o.e.title}`, due: iso(addDays(o.d, -1)), time: '20:00' }
       : { due: iso(addDays(o.d, 7)), time: '17:00', placeholder: 'e.g. Lab report, finish calculations…' })}</div>
     <h3>Notes</h3>
     <textarea id="sessNotes" rows="4" placeholder="Results, things to remember for the write-up…">${esc(info.rec.notes || '')}</textarea>
@@ -942,6 +955,8 @@ function openLabModal(key) {
   $('.modal-card', m).addEventListener('click', e => {
     const s = e.target.closest('[data-action="lab-status"]');
     if (s) { applyLabStatus(s); return openLabModal(key); }
+    const pw = e.target.closest('[data-action="lab-pre"]');
+    if (pw) { applyLabPre(pw); return openLabModal(key); }
     const b = e.target.closest('[data-m]');
     if (!b) return;
     if (b.dataset.m === 'close') closeModal();
@@ -1088,11 +1103,11 @@ function viewTimetable() {
       const tip = [o.e.title, `${o.e.start}–${o.e.end}`, o.e.location, o.e.who, course(o.e.courseId).name].filter(Boolean).join('\n');
       const labSt = o.e.type === 'lab' ? labInfo(o) : null;
       const isDone = o.e.done || (labSt && labSt.cls === 'ok');
-      return `<div class="tt-ev ${o.e.type} ${isDone ? 'is-done' : ''} ${labSt && labSt.cls === 'warn' ? 'needs-follow' : ''} ${labSt && labSt.cls === 'live' ? 'is-live' : ''}" ${evAttr(o)} style="--c:${c.color};top:${top}px;height:${h}px;left:calc(${col * w}% + 2px);width:calc(${w}% - 4px)"
+      return `<div class="tt-ev ${o.e.type} ${isDone ? 'is-done' : ''} ${labSt && labSt.cls === 'warn' ? 'needs-follow' : ''} ${labSt && labSt.cls === 'live' ? 'is-live' : ''} ${labSt && labSt.preDue ? 'needs-pre' : ''}" ${evAttr(o)} style="--c:${c.color};top:${top}px;height:${h}px;left:calc(${col * w}% + 2px);width:calc(${w}% - 4px)"
         title="${esc(tip)}">
         ${o.e.link ? extLink(o.e.link, '↗', 'tt-link') : ''}
         <div class="t" style="-webkit-line-clamp:${titleLines}">${isDone && labSt ? '✓ ' : labSt && labSt.cls === 'warn' ? '✎ ' : ''}${esc(o.e.title)}</div>
-        ${labSt && labSt.cls === 'live' ? '<div class="live-tag">● In progress</div>' : ''}
+        ${labSt && labSt.cls === 'live' ? '<div class="live-tag">● In progress</div>' : ''}${labSt && labSt.preDue && labSt.cls !== 'live' ? '<div class="pre-tag">📋 Pre-work</div>' : ''}
         ${metaShown.map(x => `<div class="m">${esc(x)}</div>`).join('')}
       </div>`;
     }).join('');
@@ -1285,6 +1300,7 @@ function dashLabs() {
   const follow = state.tasks.filter(t => t.link && t.link.kind === 'lab' && !t.done).sort(byDue).slice(0, 5);
   return `<section class="panel">
     <div class="section-head"><h2>Labs</h2><span class="spacer"></span><a href="#labs" class="small">All labs →</a></div>
+    ${labs.some(l => l.preDue) ? `<h3 class="sub">Pre-work to do</h3>${labs.filter(l => l.preDue).map(labRow).join('')}` : ''}
     ${follow.length ? `<h3 class="sub">Write-ups / follow-up due</h3>${follow.map(taskRow).join('')}` : ''}
     ${unmarked.length ? `<h3 class="sub">Not marked yet (${unmarked.length})</h3>${unmarked.slice(-4).reverse().map(labRow).join('')}` : ''}
     ${live ? `<h3 class="sub">Happening now</h3>${labRow(live)}` : ''}
@@ -1299,8 +1315,9 @@ function labRow(l) {
     <div class="lab-when"><strong>${fmtDate(o.d)}</strong><div class="small muted">${esc(o.e.start)}–${esc(o.e.end)}</div></div>
     <div class="lab-main"><div class="ev-title">${esc(o.e.title)}</div>
       <div class="small muted">${esc(o.e.location || '')}${o.e.link ? ' · ' + extLink(o.e.link) : ''}${l.rec.notes ? ' · 📝 notes' : ''}${l.tasks.length ? ` · ${l.tasks.length - l.open.length}/${l.tasks.length} tasks done` : ''}</div></div>
+    ${l.preDue ? '<span class="lab-pill warn">📋 Pre-work to do</span>' : l.rec.pre === 'done' && !l.isPast ? '<span class="lab-pill ok">✓ Pre-work done</span>' : ''}
     <span class="lab-pill ${l.cls}">${esc(l.label)}</span>
-    ${l.started || l.rec.status ? labButtons(l.key, l.rec.status) : ''}
+    ${l.started || l.rec.status ? labButtons(l.key, l.rec.status) : labPreButtons(l.key, l.rec.pre)}
   </div>`;
 }
 
@@ -1308,10 +1325,11 @@ function viewLabs() {
   const labs = allLabs();
   const past = labs.filter(l => l.isPast || l.rec.status);
   const n = c => labs.filter(l => l.cls === c).length;
-  const filters = { active: 'Upcoming & needs attention', all: 'All sessions', todo: 'Needs attention', upcoming: 'Upcoming', followup: 'Write-ups / follow-up', done: 'Completed' };
+  const filters = { active: 'Upcoming & needs attention', all: 'All sessions', todo: 'Needs attention', upcoming: 'Upcoming', prework: 'Pre-work to do', followup: 'Write-ups / follow-up', done: 'Completed' };
   const shown = labs.filter(l => ui.labFilter === 'all' ? true
     : ui.labFilter === 'active' ? ((!l.isPast && l.cls !== 'ok') || l.cls === 'todo' || l.cls === 'warn')
-    : ui.labFilter === 'todo' ? (l.cls === 'todo' || l.cls === 'warn')
+    : ui.labFilter === 'todo' ? (l.cls === 'todo' || l.cls === 'warn' || l.preDue)
+    : ui.labFilter === 'prework' ? l.preDue
     : ui.labFilter === 'upcoming' ? (l.cls === 'upcoming' || l.cls === 'live')
     : ui.labFilter === 'followup' ? l.rec.status === 'followup'
     : l.cls === 'ok');
@@ -1322,7 +1340,7 @@ function viewLabs() {
     <div class="stat"><div class="v">${n('ok')}<span class="muted small"> / ${past.length}</span></div><div class="l">Completed (of past labs)</div></div>
     <div class="stat warn"><div class="v">${n('warn')}</div><div class="l">Write-up / follow-up pending</div></div>
     <div class="stat todo"><div class="v">${n('todo')}</div><div class="l">Past labs not marked</div></div>
-    <div class="stat"><div class="v">${n('upcoming') + n('live')}</div><div class="l">Upcoming${n('live') ? ` <span class="lab-pill live">${n('live')} in progress</span>` : ''}</div></div>
+    <div class="stat"><div class="v">${n('upcoming') + n('live')}</div><div class="l">Upcoming${labs.some(l => l.preDue) ? ` <span class="lab-pill warn">${labs.filter(l => l.preDue).length} pre-work</span>` : ''}${n('live') ? ` <span class="lab-pill live">${n('live')} in progress</span>` : ''}</div></div>
   </div>
   <div class="grid-cards labs-grid">
     <section class="panel">
@@ -1510,6 +1528,7 @@ document.addEventListener('click', e => {
       'add-paper': () => openPaperForm(null),
       'q-toggle': () => toggleQ(actEl, e.altKey),
       'edit-paper': () => { const p = state.papers.find(x => x.id === actEl.dataset.id); if (p) openPaperForm(p); },
+      'lab-pre': () => { applyLabPre(actEl); render(); },
       'lab-status': () => {
         const needsDeadline = applyLabStatus(actEl);
         if (needsDeadline) openLabModal(actEl.dataset.key); else render();

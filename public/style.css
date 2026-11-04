@@ -437,6 +437,8 @@ input[type=color] { width: 38px; height: 34px; border: 1px solid var(--line); bo
 .lab-pill.live::before, .live-tag::first-letter { animation: livePulse 1.6s ease-in-out infinite; }
 .lab-pill.live::before { content: "● "; }
 .tt-ev.is-live { box-shadow: 0 0 0 2px var(--gold), var(--shadow-lift); z-index: 3; }
+.tt-ev.needs-pre { box-shadow: 0 0 0 1.5px var(--warn); }
+.pre-tag { font-size: 10px; font-weight: 700; color: var(--warn); }
 .live-tag { font-size: 10px; font-weight: 700; color: #6e1a2b; text-transform: uppercase; letter-spacing: .04em; }
 @media (prefers-color-scheme: dark) { .live-tag { color: var(--gold); } }
 @keyframes livePulse { 50% { opacity: .35; } }
