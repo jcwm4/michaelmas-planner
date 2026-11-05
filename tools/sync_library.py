@@ -43,9 +43,24 @@ def tidy(words):
     return out[:1].upper() + out[1:]
 
 
-def titles_for(files, strip_common: bool):
+NOISE = {"partia", "ia", "p1a", "1a", "mich", "michaelmas", "filled", "complete", "jma", "a4", "accts", "tb", "-", "v"}
+
+
+def denoise(ts, group):
+    """Drop course-name words, years and filler like 'PartIA', 'Mich', 'filled', 'A4'."""
+    gwords = [w.lower() for w in re.findall(r"[A-Za-z]+", group or "") if len(w) > 2]
+    out = []
+    for t in ts:
+        w = t.lower().strip("()")
+        if w in NOISE or re.fullmatch(r"(19|20)\d\d", w) or any(w.startswith(g[:5]) for g in gwords):
+            continue
+        out.append(t)
+    return out
+
+
+def titles_for(files, strip_common: bool, group=""):
     """Readable titles; within a course, drop words every file shares (e.g. 'PartIA Maths Mich 2026')."""
-    toks = {f: tokens(f.stem) for f in files}
+    toks = {f: (denoise(tokens(f.stem), group) or tokens(f.stem)) if strip_common else tokens(f.stem) for f in files}
     common = set()
     if strip_common and len(files) > 1:
         sets = [{t.lower() for t in ts} for ts in toks.values()]
@@ -53,7 +68,8 @@ def titles_for(files, strip_common: bool):
     out = {}
     for f, ts in toks.items():
         kept = [t for t in ts if t.lower() not in common and not (strip_common and t.lower() in STOP)]
-        out[f] = tidy(kept or ts)
+        t = tidy(kept or ts)
+        out[f] = re.sub(r"^Slide\b", "Slides", t)
     return out
 
 
@@ -70,7 +86,7 @@ def sync_kind(data, kind, folder: Path, group_of, strip_common, dry):
         by_group.setdefault(group_of(f), []).append(f)
     seen, changes = set(), []
     for group, fs in by_group.items():
-        names = titles_for(fs, strip_common)
+        names = titles_for(fs, strip_common, group)
         for f in fs:
             sub = f"{slug(group)}/" if kind == "handout" else ""
             path = f"library/{kind}s/{sub}{slug(f.stem)}.pdf"
