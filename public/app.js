@@ -1425,6 +1425,7 @@ function viewSupervisions() {
 function viewPapers() {
   let papers = state.papers.slice().sort(byDue);
   if (ui.paperFilter === 'outstanding') papers = papers.filter(p => p.status !== 'done' && p.status !== 'submitted');
+  else if (ui.paperFilter === 'progress') papers = papers.filter(p => p.status === 'progress');
   if (ui.paperCourse) papers = papers.filter(p => p.courseId === ui.paperCourse);
   const rows = papers.map(p => {
     const c = course(p.courseId);
@@ -1444,7 +1445,7 @@ function viewPapers() {
   return `
   <section class="panel">
     <div class="section-head"><h2>Examples papers</h2>
-      <select data-action="paper-filter"><option value="outstanding"${ui.paperFilter === 'outstanding' ? ' selected' : ''}>Outstanding</option><option value="all"${ui.paperFilter === 'all' ? ' selected' : ''}>All papers</option></select>
+      <select data-action="paper-filter"><option value="outstanding"${ui.paperFilter === 'outstanding' ? ' selected' : ''}>Outstanding</option><option value="progress"${ui.paperFilter === 'progress' ? ' selected' : ''}>In progress</option><option value="all"${ui.paperFilter === 'all' ? ' selected' : ''}>All papers</option></select>
       <select data-action="paper-course"><option value="">All courses</option>${state.courses.map(c => `<option value="${c.id}"${c.id === ui.paperCourse ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
       <span class="spacer"></span>
       ${extLink(PAPERS_URL, 'Examples papers on Moodle ↗', 'btn')}
