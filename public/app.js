@@ -741,10 +741,15 @@ function openTaskForm(t) {
       { key: 'time', label: 'Time', hint: 'optional — shows it on the calendar', type: 'time' },
       { key: 'courseId', label: 'Course', type: 'select', options: courseOptions() },
       { key: 'priority', label: 'Priority', type: 'select', options: Object.entries(PRIORITY) },
+      { key: 'rolling', label: '🔁 Spare-time task', hint: 'no date — listed in the daily email until done', type: 'checkbox' },
       { key: 'done', label: 'Done', type: 'checkbox' },
       { key: 'notes', label: 'Notes', type: 'textarea', full: true },
     ],
-    onSave: x => { if (!x.title) return 'Task needs a name.'; Object.assign(t, x); },
+    onSave: x => {
+      if (!x.title) return 'Task needs a name.';
+      if (x.rolling) { x.due = ''; x.time = ''; }
+      Object.assign(t, x);
+    },
     onDelete: () => { state.tasks = state.tasks.filter(x => x !== t); },
   });
 }
@@ -1537,7 +1542,7 @@ function taskRow(t) {
     <span class="title" data-task="${t.id}">${esc(t.title)}</span>
     ${t.link ? `<span class="chip link-chip" data-link-kind="${t.link.kind}" data-link-key="${esc(t.link.key)}" title="Open">${esc(linkLabel(t))}</span>` : ''}
     ${t.courseId ? `<span class="row small muted" style="gap:4px"><i class="dot" style="background:${c.color}"></i>${esc(c.name)}</span>` : ''}
-    <span class="small" style="min-width:110px;text-align:right">${t.due ? fmtDate(parseISO(t.due)) + (t.time ? ', ' + esc(t.time) : '') + ' ' + relDue(t.due, t.done) : ''}</span>
+    <span class="small" style="min-width:110px;text-align:right">${t.rolling && !t.due ? '<span class="muted">🔁 when free</span>' : ''}${t.due ? fmtDate(parseISO(t.due)) + (t.time ? ', ' + esc(t.time) : '') + ' ' + relDue(t.due, t.done) : ''}</span>
   </div>`;
 }
 
@@ -1550,7 +1555,8 @@ function viewTasks() {
     ['Today', open.filter(x => x.due === tStr)],
     ['Next 7 days', open.filter(x => x.due && x.due > tStr && x.due <= wkEnd)],
     ['Later', open.filter(x => x.due && x.due > wkEnd)],
-    ['No date', open.filter(x => !x.due)],
+    ['🔁 Spare time — in your daily email until done', open.filter(x => !x.due && x.rolling)],
+    ['No date', open.filter(x => !x.due && !x.rolling)],
   ];
   const done = state.tasks.filter(x => x.done);
   return `
@@ -1560,6 +1566,8 @@ function viewTasks() {
       <input type="text" name="title" placeholder="Add a task… e.g. Write up Lab 2, read Materials notes" required>
       <input type="date" name="due" value="${tStr}">
       <input type="time" name="time" title="Optional: add a time to show it on the calendar">
+      <label class="rolling-opt" title="No date: it's listed in your daily email as something to do when you have spare time">
+        <input type="checkbox" name="rolling"> 🔁 Spare time</label>
       <select name="courseId">${courseOptions().map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
       <select name="priority">${Object.entries(PRIORITY).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
       <button class="btn primary">Add</button>
@@ -2049,10 +2057,19 @@ document.addEventListener('submit', e => {
   const f = e.target;
   const title = f.elements.title.value.trim();
   if (!title) return;
-  state.tasks.push({ id: uid(), title, due: f.elements.due.value, time: f.elements.time.value, courseId: f.elements.courseId.value, priority: f.elements.priority.value, done: false, notes: '' });
+  const rolling = f.elements.rolling.checked;
+  state.tasks.push({ id: uid(), title, due: rolling ? '' : f.elements.due.value, time: rolling ? '' : f.elements.time.value,
+    courseId: f.elements.courseId.value, priority: f.elements.priority.value, done: false, notes: '', ...(rolling ? { rolling: true } : {}) });
   save(); render();
+  if (rolling) { $('#taskAdd [name=rolling]').checked = true; rollingToggle(); }
   $('#taskAdd input[name=title]').focus();
 });
+function rollingToggle() {
+  const f = $('#taskAdd'); if (!f) return;
+  const on = f.elements.rolling.checked;
+  for (const n of ['due', 'time']) f.elements[n].disabled = on;
+}
+document.addEventListener('change', e => { if (e.target.name === 'rolling' && e.target.closest('#taskAdd')) rollingToggle(); });
 
 /* ---------------- export helpers ---------------- */
 function download(name, text, type) {
