@@ -487,6 +487,12 @@ function closeModal() {
   if (state) render();
 }
 document.addEventListener('keydown', e => {
+  // Cmd/Ctrl +, − and 0 zoom the open PDF rather than the whole page
+  if (viewer && (e.metaKey || e.ctrlKey) && ['=', '+', '-', '_', '0'].includes(e.key)) {
+    e.preventDefault();
+    zoomPdf(viewer, e.key === '0' ? 1 : viewer.zoom * (e.key === '-' || e.key === '_' ? 0.8 : 1.25));
+    return;
+  }
   if (e.key !== 'Escape') return;
   if (viewer) closePdf(); else if (!$('#modal').hidden) closeModal();
 });
@@ -992,7 +998,7 @@ async function openDoc(d) {
       <div class="pdf-title"><strong>${esc(d.title)}</strong><span class="small">${esc(d.sub || '')}</span></div>
       <span class="spacer"></span>
       <button type="button" class="btn sm" data-pdf="out" aria-label="Zoom out">−</button>
-      <button type="button" class="btn sm" data-pdf="fit" aria-label="Fit width">Fit</button>
+      <button type="button" class="btn sm pdf-zoom" data-pdf="fit" title="Fit to width" aria-label="Zoom 100%, fit to width">100%</button>
       <button type="button" class="btn sm" data-pdf="in" aria-label="Zoom in">+</button>
       <button type="button" class="btn sm" data-pdf="save" title="Save / open in another app">⇩</button>
     </div>
@@ -1009,10 +1015,7 @@ async function openDoc(d) {
     if (!b) return;
     const a = b.dataset.pdf;
     if (a === 'close') closePdf();
-    if (a === 'in' || a === 'out' || a === 'fit') {
-      me.zoom = a === 'fit' ? 1 : Math.min(3, Math.max(0.5, me.zoom * (a === 'in' ? 1.25 : 0.8)));
-      if (me.doc) layoutPages(me);
-    }
+    if (a === 'in' || a === 'out' || a === 'fit') zoomPdf(me, a === 'fit' ? 1 : me.zoom * (a === 'in' ? 1.25 : 0.8));
     if (a === 'save' && me.buf) {
       const url = URL.createObjectURL(new Blob([me.buf], { type: 'application/pdf' }));
       const link = document.createElement('a');
@@ -1027,21 +1030,26 @@ async function openDoc(d) {
     me.buf = buf;
     me.doc = await lib.getDocument({ data: new Uint8Array(buf.slice(0)), isEvalSupported: false }).promise;
     if (viewer !== me) { me.doc.destroy(); return; }
+    const base = (await me.doc.getPage(1)).getViewport({ scale: 1 });
+    me.aspect = base.height / base.width;
+    if (viewer !== me) return;
     layoutPages(me);
+    pinchZoom(me);
   } catch (err) {
     if (viewer !== me) return;
     $('.pdf-pages', el).innerHTML = `<div class="pdf-msg">Couldn't open this PDF: ${esc(err.message || String(err))}.<br>
       ${navigator.onLine ? '' : "You're offline and it hasn't been opened on this device before. "}</div>`;
   }
 }
-async function layoutPages(v) {
+const PDF_ZOOM = [0.5, 5];
+function layoutPages(v) {
   const box = $('.pdf-pages', v.el);
   v.io && v.io.disconnect();
-  const width = Math.min(box.clientWidth - 16, 900) * v.zoom;
-  const first = await v.doc.getPage(1);
-  const base = first.getViewport({ scale: 1 });
-  box.innerHTML = Array.from({ length: v.doc.numPages }, (_, i) =>
-    `<div class="pdf-page" data-n="${i + 1}" style="width:${width}px;height:${width * base.height / base.width}px"><canvas></canvas></div>`).join('');
+  const width = Math.round(Math.min(box.clientWidth - 16, 900) * v.zoom);
+  box.innerHTML = `<div class="pdf-stack">${Array.from({ length: v.doc.numPages }, (_, i) =>
+    `<div class="pdf-page" data-n="${i + 1}" style="width:${width}px;height:${Math.round(width * v.aspect)}px"><canvas></canvas></div>`).join('')}</div>`;
+  const label = $('.pdf-zoom', v.el);
+  if (label) label.textContent = `${Math.round(v.zoom * 100)}%`;
   v.io = new IntersectionObserver(entries => entries.forEach(en => {
     const div = en.target;
     if (en.isIntersecting && !div.dataset.done) { div.dataset.done = '1'; drawPage(v, div, width); }
@@ -1050,6 +1058,72 @@ async function layoutPages(v) {
     }
   }), { root: box, rootMargin: '1200px 0px' });
   box.querySelectorAll('.pdf-page').forEach(d => v.io.observe(d));
+}
+/** Zoom the PDF (not the page) to z, keeping the point under (cx, cy) — screen coords — in place. */
+function zoomPdf(v, z, cx, cy) {
+  if (!v.doc) return;
+  z = Math.min(PDF_ZOOM[1], Math.max(PDF_ZOOM[0], z));
+  if (Math.abs(z - v.zoom) < 0.001) { v.zoom = z; return; }
+  const box = $('.pdf-pages', v.el), br = box.getBoundingClientRect();
+  if (cx == null) { cx = br.left + box.clientWidth / 2; cy = br.top + box.clientHeight / 2; }
+  const stack = $('.pdf-stack', box), sr = stack.getBoundingClientRect();
+  const k = z / v.zoom, rx = cx - sr.left, ry = cy - sr.top;
+  v.zoom = z;
+  layoutPages(v);
+  const nr = $('.pdf-stack', box).getBoundingClientRect();
+  box.scrollLeft += nr.left + rx * k - cx;
+  box.scrollTop += nr.top + ry * k - cy;
+}
+/** Pinch (touch), trackpad pinch / Ctrl+scroll (desktop) zoom the PDF only. The pages are
+    scaled with a CSS transform while the gesture runs, then re-drawn sharp at the new size. */
+function pinchZoom(v) {
+  const box = $('.pdf-pages', v.el);
+  let g = null;   // { z0, s, cx, cy, ox, oy }
+  const begin = (cx, cy) => {
+    const sr = $('.pdf-stack', box).getBoundingClientRect();
+    g = { z0: v.zoom, s: 1, cx, cy, ox: cx - sr.left, oy: cy - sr.top };
+  };
+  const preview = s => {
+    g.s = Math.min(PDF_ZOOM[1] / g.z0, Math.max(PDF_ZOOM[0] / g.z0, s));
+    const st = $('.pdf-stack', box);
+    st.style.transformOrigin = `${g.ox}px ${g.oy}px`;
+    st.style.transform = `scale(${g.s})`;
+  };
+  const commit = () => {
+    if (!g || viewer !== v) return;
+    const { z0, s, cx, cy } = g; g = null;
+    $('.pdf-stack', box).style.transform = '';
+    zoomPdf(v, z0 * s, cx, cy);
+  };
+  const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  let d0 = 0;
+  box.addEventListener('touchstart', e => {
+    if (e.touches.length !== 2) return;
+    e.preventDefault();
+    d0 = dist(e.touches);
+    begin((e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2);
+    g.touch = true;
+  }, { passive: false });
+  box.addEventListener('touchmove', e => {
+    if (!g || !g.touch || e.touches.length !== 2) return;
+    e.preventDefault();
+    preview(dist(e.touches) / d0);
+  }, { passive: false });
+  box.addEventListener('touchend', e => { if (g && g.touch && e.touches.length < 2) commit(); });
+  box.addEventListener('touchcancel', () => { if (g && g.touch) commit(); });
+  // desktop: trackpad pinch and Ctrl/Cmd+scroll arrive as wheel events with ctrlKey
+  let wheelTimer = 0;
+  box.addEventListener('wheel', e => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    if (!g) begin(e.clientX, e.clientY);
+    preview(g.s * Math.exp(-e.deltaY * (e.deltaMode ? 0.05 : 0.01)));
+    clearTimeout(wheelTimer); wheelTimer = setTimeout(commit, 180);
+  }, { passive: false });
+  // Safari (macOS) sends its own gesture events for trackpad pinch; on iOS just block page zoom
+  box.addEventListener('gesturestart', e => { e.preventDefault(); if (!g && !('ontouchstart' in window)) { begin(e.clientX, e.clientY); g.gesture = true; } });
+  box.addEventListener('gesturechange', e => { e.preventDefault(); if (g && g.gesture) preview(e.scale); });
+  box.addEventListener('gestureend', e => { e.preventDefault(); if (g && g.gesture) commit(); });
 }
 async function drawPage(v, div, width) {
   try {
