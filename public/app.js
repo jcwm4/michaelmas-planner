@@ -262,7 +262,7 @@ function migrate() {
   state.settings = { ...d.settings, ...state.settings };
   if (+state.settings.dayEnd === 19) state.settings.dayEnd = 20;   // old default cut off the 7pm slot
   for (const k of ['courses', 'events', 'papers', 'tasks']) if (!Array.isArray(state[k])) state[k] = d[k];
-  for (const k of ['labs', 'supNotes', 'lectures']) if (!state[k] || typeof state[k] !== 'object' || Array.isArray(state[k])) state[k] = {};
+  for (const k of ['labs', 'supNotes', 'lectures', 'pastPapers']) if (!state[k] || typeof state[k] !== 'object' || Array.isArray(state[k])) state[k] = {};
   for (const p of state.papers) ensureQuestions(p);
   // lecture catch-up starts from the current week (change it in Settings)
   if (!state.settings.lectureTrackFrom) state.settings.lectureTrackFrom = iso(windowStart(weekContaining(today())));
@@ -496,7 +496,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.key !== 'Escape') return;
-  if (viewer) closePdf(); else if (!$('#modal').hidden) closeModal();
+  if ($('#ccView')) closeCC(); else if (viewer) closePdf(); else if (!$('#modal').hidden) closeModal();
 });
 $('#modal').addEventListener('mousedown', e => { if (e.target.id === 'modal') closeModal(); });
 
@@ -2121,7 +2121,85 @@ document.addEventListener('change', async e => {
   if (me) { me[k] = e.target.checked; save(); }
 });
 
-const VIEWS = { search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
+
+/* ---------------- past (Tripos) papers, shown from CamCribs ----------------
+   The papers are displayed straight from camcribs.com in a frame (nothing is copied here);
+   only your own progress (status / revisit flag / notes) is saved, in the private data repo. */
+const CC = 'https://camcribs.com';
+const CC_YEARS = [...Array.from({ length: 24 }, (_, i) => 2019 - i), 2022, 2023, 2024, 2025].sort((a, b) => b - a);
+const CC_MODULES = [
+  { code: '1P1', name: 'Mechanical Engineering', courses: ['mech'] },
+  { code: '1P2', name: 'Structures and Materials', courses: ['struct', 'mat'] },
+  { code: '1P3', name: 'Electrical and Information Engineering', courses: ['elec'] },
+  { code: '1P4', name: 'Mathematical Methods', courses: ['maths'] },
+];
+const PP_STATUS = { '': 'Not started', attempted: 'Attempted', done: 'Done' };
+const ccId = (code, year) => `IA-T-${code}-${year}`;
+const ccUrl = id => `${CC}/viewer/?paper=${encodeURIComponent(id)}&view=none`;
+const ppRec = id => state.pastPapers[id] || {};
+function setPP(id, patch) {
+  const r = { ...ppRec(id), ...patch };
+  for (const k of Object.keys(r)) if (r[k] === '' || r[k] === false) delete r[k];
+  if (Object.keys(r).length) state.pastPapers[id] = { ...r, updated: iso(today()) }; else delete state.pastPapers[id];
+  save();
+}
+function viewPastPapers() {
+  const f = ui.ppFilter || 'all';
+  const card = m => {
+    const color = course(m.courses[0]).color;
+    const recs = CC_YEARS.map(y => ({ y, id: ccId(m.code, y), r: ppRec(ccId(m.code, y)) }));
+    const done = recs.filter(x => x.r.status === 'done').length, tried = recs.filter(x => x.r.status === 'attempted').length;
+    const shown = recs.filter(x => f === 'all' || (f === 'todo' ? x.r.status !== 'done' : f === 'revisit' ? x.r.revisit : x.r.status));
+    return `<section class="panel pp-card" style="--c:${color}">
+      <div class="lec-head"><div><div class="small muted">${m.code}</div><h2>${esc(m.name)}</h2></div><span class="spacer"></span>
+        <a class="btn sm" href="${CC}/ia/${m.code}/?kind=tripos" target="_blank" rel="noopener noreferrer">CamCribs ↗</a></div>
+      <div class="small muted" style="margin-bottom:8px">${done}/${CC_YEARS.length} done${tried ? ` · ${tried} attempted` : ''}</div>
+      <div class="pp-years">${shown.map(x => `<button type="button" class="pp-year ${x.r.status || ''} ${x.r.revisit ? 'revisit' : ''}" data-action="pp-open" data-id="${x.id}"
+          title="${m.code} ${x.y} — ${PP_STATUS[x.r.status || '']}${x.r.revisit ? ' · ⚑ revisit' : ''}${x.r.note ? '\n' + esc(x.r.note) : ''}">${x.y}${x.r.revisit ? '<span class="pp-flag">⚑</span>' : ''}</button>`).join('') || '<span class="small muted">None here.</span>'}</div>
+    </section>`;
+  };
+  return `<div class="section-head"><h2>Past papers</h2>
+      <select data-action="pp-filter">${[['all', 'All years'], ['todo', 'Not done yet'], ['started', 'Attempted or done'], ['revisit', '⚑ To revisit']].map(([k, l]) => `<option value="${k}"${k === f ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      <span class="spacer"></span><span class="small muted">Part IA Tripos papers from <a href="${CC}" target="_blank" rel="noopener noreferrer">CamCribs</a> · tap a year to open it</span></div>
+    <p class="small muted" style="margin-top:0"><span class="pp-key done">Done</span> <span class="pp-key attempted">Attempted</span> <span class="pp-key">Not started</span> · ⚑ = revisit</p>
+    <div class="grid-cards">${CC_MODULES.map(card).join('')}</div>`;
+}
+function closeCC() { const v = $('#ccView'); if (v) v.remove(); document.body.classList.remove('pdf-open'); render(); }
+function openCC(id) {
+  const [, , code, year] = id.split('-');
+  const m = CC_MODULES.find(x => x.code === code) || { name: '' };
+  $('#ccView') && $('#ccView').remove();
+  const el = document.createElement('div');
+  el.id = 'ccView'; el.className = 'cc-view';
+  el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', `${code} ${year} Tripos paper`);
+  const bar = () => {
+    const r = ppRec(id);
+    return `<button type="button" class="btn sm" data-cc="close" aria-label="Close">✕</button>
+      <div class="pdf-title"><strong>${code} Tripos ${year}</strong><span class="small">${esc(m.name)}</span></div>
+      <span class="spacer"></span>
+      <select data-cc="status" aria-label="Status">${Object.entries(PP_STATUS).map(([k, l]) => `<option value="${k}"${k === (r.status || '') ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      <button type="button" class="btn sm ${r.revisit ? 'on' : ''}" data-cc="revisit" aria-pressed="${!!r.revisit}" title="Flag to revisit">⚑</button>
+      <button type="button" class="btn sm" data-cc="note" title="Notes${r.note ? ': ' + esc(r.note) : ''}">📝${r.note ? '•' : ''}</button>
+      <a class="btn sm" href="${ccUrl(id)}" target="_blank" rel="noopener noreferrer" title="Open on CamCribs">↗</a>`;
+  };
+  el.innerHTML = `<div class="pdf-bar">${bar()}</div>
+    <iframe class="cc-frame" src="${ccUrl(id)}" title="${code} ${year} Tripos paper (CamCribs)" referrerpolicy="no-referrer"
+      sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"></iframe>`;
+  document.body.appendChild(el);
+  document.body.classList.add('pdf-open');
+  const redraw = () => { $('.pdf-bar', el).innerHTML = bar(); };
+  el.addEventListener('click', e => {
+    const b = e.target.closest('[data-cc]');
+    if (!b) return;
+    const a = b.dataset.cc;
+    if (a === 'close') closeCC();
+    if (a === 'revisit') { setPP(id, { revisit: !ppRec(id).revisit }); redraw(); }
+    if (a === 'note') { const n = prompt(`Notes for ${code} ${year}`, ppRec(id).note || ''); if (n != null) { setPP(id, { note: n.trim() }); redraw(); } }
+  });
+  el.addEventListener('change', e => { if (e.target.dataset.cc === 'status') setPP(id, { status: e.target.value }); });
+  $('[data-cc="close"]', el).focus();
+}
+const VIEWS = { pastpapers: viewPastPapers, search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
 const currentTab = () => { const h = location.hash.slice(1); return VIEWS[h] ? h : 'dashboard'; };
 
 function render() {
@@ -2274,6 +2352,7 @@ document.addEventListener('click', e => {
       },
       'wl-course': () => { ui.paperCourse = ui.paperCourse === actEl.dataset.id ? '' : actEl.dataset.id; render(); },
       'lec-review': () => { state.lectures[actEl.dataset.key] = true; save(); render(); },
+      'pp-open': () => openCC(actEl.dataset.id),
       'lec-review-all': () => { for (const o of lectureBacklog()) if (o.e.title === actEl.dataset.title) state.lectures[occKey(o)] = true; save(); render(); },
       'view-pdf': () => { const p = state.papers.find(x => x.id === actEl.dataset.id); if (p) openPdf(p); },
       'edit-paper': () => { const p = state.papers.find(x => x.id === actEl.dataset.id); if (p) openPaperForm(p); },
@@ -2347,6 +2426,7 @@ document.addEventListener('change', e => {
   else if (act === 'paper-filter') { ui.paperFilter = t.value; render(); }
   else if (act === 'paper-course') { ui.paperCourse = t.value; render(); }
   else if (act === 'lab-filter') { ui.labFilter = t.value; render(); }
+  else if (act === 'pp-filter') { ui.ppFilter = t.value; render(); }
   else if (t.closest('#termForm')) {
     const v = t.type === 'number' ? +t.value : t.value;
     if ((t.name === 'week1Start' || t.name === 'lectureTrackFrom') && !t.value) return;

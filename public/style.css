@@ -726,3 +726,24 @@ details.later > summary { cursor: pointer; list-style: revert; }
 }
 #toast.show { transform: translate(-50%, 0); pointer-events: auto; }
 #toast .btn { background: rgba(255, 255, 255, .12); color: #fff; border-color: rgba(255, 255, 255, .3); box-shadow: none; }
+
+/* ---------- past papers (CamCribs) ---------- */
+.pp-card { border-top: 3px solid var(--c); }
+.pp-years { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 6px; }
+.pp-year {
+  position: relative; padding: 7px 0; border-radius: 7px; border: 1px solid var(--line); background: var(--panel);
+  color: inherit; font: inherit; font-size: 14px; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.pp-year:hover { border-color: var(--gold); }
+.pp-year:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.pp-year.attempted { background: color-mix(in srgb, var(--warn) 22%, var(--panel)); border-color: var(--warn); }
+.pp-year.done { background: color-mix(in srgb, var(--ok) 26%, var(--panel)); border-color: var(--ok); }
+.pp-flag { position: absolute; top: -6px; right: -4px; font-size: 11px; color: #d64545; }
+.pp-key { display: inline-block; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--line); }
+.pp-key.attempted { background: color-mix(in srgb, var(--warn) 22%, var(--panel)); border-color: var(--warn); }
+.pp-key.done { background: color-mix(in srgb, var(--ok) 26%, var(--panel)); border-color: var(--ok); }
+.cc-view { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #fff; }
+.cc-view .pdf-bar select { max-width: 130px; }
+.cc-view .pdf-bar .btn.on { background: rgba(214, 69, 69, .5); }
+.cc-frame { flex: 1; width: 100%; border: 0; background: #fff; }
+.pp-card .lec-head .btn { white-space: nowrap; flex: none; }
