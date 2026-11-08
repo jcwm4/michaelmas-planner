@@ -2228,21 +2228,29 @@ $('#menuBtn').addEventListener('click', () => setNav(!document.body.classList.co
 $('#scrim').addEventListener('click', () => setNav(false));
 $('#sidebar').addEventListener('click', e => { if (e.target.closest('a')) setNav(false); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('nav-open')) { setNav(false); $('#menuBtn').focus(); } });
-/* Hide the header when scrolling down; show it again when scrolling up (or near the top). */
-let lastY = window.scrollY, hdrTick = false;
-window.addEventListener('scroll', () => {
+/* Hide the header when scrolling down; show it again when scrolling up (or near the top).
+   Works for the page itself and for boxes that scroll on their own (e.g. the timetable). */
+const lastPos = new WeakMap();
+let hdrTick = false, hdrEvt = null;
+function onAnyScroll(e) {
+  hdrEvt = e;
   if (hdrTick) return;
   hdrTick = true;
   requestAnimationFrame(() => {
     hdrTick = false;
-    const y = Math.max(0, window.scrollY), dy = y - lastY;
-    const keep = y < 70 || document.body.classList.contains('nav-open') || document.activeElement === $('#searchBox');
+    const t = hdrEvt && hdrEvt.target;
+    const el = !t || t === document || t === document.documentElement || t === document.body ? document.scrollingElement || document.documentElement : t;
+    if (el.closest && el.closest('#sidebar, #modal, #pdfView, #ccView, .hsearch')) return;   // menus and viewers don't count
+    const y = Math.max(0, el.scrollTop), prev = lastPos.has(el) ? lastPos.get(el) : y, dy = y - prev;
+    const page = document.scrollingElement || document.documentElement;
+    const keep = (el === page && y < 70) || document.body.classList.contains('nav-open') || document.activeElement === $('#searchBox');
     if (keep) document.body.classList.remove('hdr-hidden');
     else if (dy > 6) document.body.classList.add('hdr-hidden');
-    else if (dy < -6) document.body.classList.remove('hdr-hidden');
-    if (Math.abs(dy) > 6 || keep) lastY = y;
+    else if (dy < -6 || (el !== page && y < 10 && page.scrollTop < 70)) document.body.classList.remove('hdr-hidden');
+    if (Math.abs(dy) > 6 || keep || !lastPos.has(el)) lastPos.set(el, y);
   });
-}, { passive: true });
+}
+document.addEventListener('scroll', onAnyScroll, { capture: true, passive: true });
 window.addEventListener('hashchange', () => document.body.classList.remove('hdr-hidden'));
 $('#searchBox').addEventListener('focus', () => document.body.classList.remove('hdr-hidden'));
 
