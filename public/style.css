@@ -762,7 +762,6 @@ details.later > summary { cursor: pointer; list-style: revert; }
   padding: 18px 12px 14px; background: var(--panel); border-right: 1px solid var(--line);
   transition: width .25s var(--ease);
 }
-.side-h { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 0 10px 4px; white-space: nowrap; }
 .sidebar a, .side-collapse {
   position: relative; display: flex; align-items: center; gap: 11px; padding: 8px 10px; margin: 1px 0; border-radius: 9px;
   color: var(--text); text-decoration: none; font-weight: 500; white-space: nowrap;
@@ -782,11 +781,9 @@ details.later > summary { cursor: pointer; list-style: revert; }
 /* collapsed: icon rail (computer only) */
 @media (min-width: 721px) {
   body.side-mini { --side: 64px; }
-  body.side-mini .sidebar .lbl, body.side-mini .side-h { display: none; }
+  body.side-mini .sidebar .lbl { display: none; }
   body.side-mini .sidebar a, body.side-mini .side-collapse { justify-content: center; padding: 9px 0; }
   body.side-mini .sidebar .badge { position: absolute; top: 2px; right: 4px; min-width: 16px; line-height: 16px; font-size: 10px; padding: 0 4px; }
-  body.side-mini .side-group { border-top: 1px solid var(--line); padding-top: 10px; }
-  body.side-mini .side-group:first-child { border-top: 0; padding-top: 0; }
 }
 .scrim { display: none; }
 
@@ -815,4 +812,12 @@ details.later > summary { cursor: pointer; list-style: revert; }
   .scrim { display: block; position: fixed; inset: 0; z-index: 45; background: rgba(20, 8, 10, .45); animation: fade-in .2s; }
   .side-collapse { display: none; }
   .sidebar a { padding: 11px 12px; font-size: 15.5px; }
+}
+
+/* header slides away while scrolling down, back on scrolling up */
+.topbar { transition: transform .28s var(--ease); }
+body.hdr-hidden .topbar { transform: translateY(calc(-100% - 4px)); }
+.sidebar { transition: width .25s var(--ease), top .28s var(--ease), height .28s var(--ease), transform .28s var(--ease); }
+@media (min-width: 721px) {
+  body.hdr-hidden .sidebar { top: 0; height: 100vh; height: 100dvh; }
 }

@@ -2228,6 +2228,24 @@ $('#menuBtn').addEventListener('click', () => setNav(!document.body.classList.co
 $('#scrim').addEventListener('click', () => setNav(false));
 $('#sidebar').addEventListener('click', e => { if (e.target.closest('a')) setNav(false); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('nav-open')) { setNav(false); $('#menuBtn').focus(); } });
+/* Hide the header when scrolling down; show it again when scrolling up (or near the top). */
+let lastY = window.scrollY, hdrTick = false;
+window.addEventListener('scroll', () => {
+  if (hdrTick) return;
+  hdrTick = true;
+  requestAnimationFrame(() => {
+    hdrTick = false;
+    const y = Math.max(0, window.scrollY), dy = y - lastY;
+    const keep = y < 70 || document.body.classList.contains('nav-open') || document.activeElement === $('#searchBox');
+    if (keep) document.body.classList.remove('hdr-hidden');
+    else if (dy > 6) document.body.classList.add('hdr-hidden');
+    else if (dy < -6) document.body.classList.remove('hdr-hidden');
+    if (Math.abs(dy) > 6 || keep) lastY = y;
+  });
+}, { passive: true });
+window.addEventListener('hashchange', () => document.body.classList.remove('hdr-hidden'));
+$('#searchBox').addEventListener('focus', () => document.body.classList.remove('hdr-hidden'));
+
 const SIDE_KEY = 'planner-side-mini';
 const setMini = on => {
   document.body.classList.toggle('side-mini', on);
