@@ -70,3 +70,17 @@ Each device's push subscription is saved in the private data repo; `notify.yml` 
 `tools/auto_sync.sh` whenever `~/Documents/IA Engineering` changes (and every 15 minutes).
 It only syncs when a PDF was added, changed or removed, and shows a Mac notification.
 `zsh tools/install_auto_sync.sh --remove` turns it off. Log: `~/Library/Logs/Michaelmas Planner sync.log`.
+
+## Offline
+
+`public/sw.js` keeps the app itself available with no signal (network first, saved copy as
+fallback), and each device saves every PDF plus the search index in its cache (Settings → Offline).
+Edits made offline are kept on the device and upload when you're back online.
+
+## Terms and the vacation plan
+
+Settings → Terms → **Start a new term** archives the current term (read-only, viewable from
+Settings), carries over unfinished papers, open tasks, lectures to catch up and lab follow-ups,
+and clears the timetable for the new term's spreadsheets. The **Vacation** page builds a
+week-by-week plan from what's left (examples questions, flagged questions to redo, lecture
+catch-up, past papers); its items are linked to the real questions, lectures and past papers.

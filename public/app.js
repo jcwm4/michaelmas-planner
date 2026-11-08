@@ -164,7 +164,7 @@ let gh = null, ghSha = null, dirty = false, saving = false, conflict = false, se
 function ghCfg() { try { return JSON.parse(localStorage.getItem(GH_KEY) || 'null'); } catch { return null; } }
 function cacheGet() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch { return null; } }
 function cachePut() {
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(state)); if (ghSha) localStorage.setItem(SHA_KEY, ghSha); } catch { /* storage full/blocked */ }
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(liveState || state)); if (ghSha) localStorage.setItem(SHA_KEY, ghSha); } catch { /* storage full/blocked */ }
 }
 const b64encode = str => {
   const bytes = new TextEncoder().encode(str); let bin = '';
@@ -246,12 +246,13 @@ async function load() {
 
 /** Pull the latest copy when you come back to the app (e.g. after using it on your other device). */
 async function syncFromRemote() {
-  if (backend !== 'github' || dirty || saving || conflict) return;
+  if (backend !== 'github' || dirty || saving || conflict || liveState) return;
   try {
     const r = await ghRead(gh);
     if (r.sha && r.sha !== ghSha && r.data) {
       state = r.data; ghSha = r.sha; migrate(); cachePut();
       if ($('#modal').hidden) render();
+      setTimeout(offlineSync, 2000);
       setStatus('Updated from your other device ✓');
     }
   } catch { /* offline — try again later */ }
@@ -308,6 +309,7 @@ function flagList(p, { withNotes = true } = {}) {
 
 let saveTimer;
 function save() {
+  if (liveState) { toast('Past terms are read-only — nothing was saved'); return; }
   cachePut();
   if (backend === 'setup') return;
   dirty = true;
@@ -322,7 +324,7 @@ async function flushSave() {
   saving = true; dirty = false;
   let retry = 0;
   try {
-    const text = JSON.stringify(state, null, 1);
+    const text = JSON.stringify(liveState || state, null, 1);
     if (backend === 'github') ghSha = await ghWrite(gh, text, ghSha);
     else {
       const r = await fetch('api/data', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: text });
@@ -1321,6 +1323,7 @@ function viewDashboard() {
   ${noEvents ? `<div class="panel" style="margin-bottom:16px"><strong>Your timetable is empty.</strong>
     <span class="muted">Add events in the <a href="#timetable">Timetable</a> tab (click any slot), or import your lecture/lab and supervision spreadsheets.</span></div>` : ''}
   <div class="grid-cards">
+    ${dashVacation()}
     <section class="panel">
       <div class="section-head"><h2>Today</h2><span class="spacer"></span><a href="#timetable" class="small">Full week →</a></div>
       ${todayOcc.length ? `<ul class="ev-list">${todayOcc.map(o => evRow(o)).join('')}</ul>` : '<div class="empty">Nothing timetabled today.</div>'}
@@ -1683,6 +1686,11 @@ function viewSettings() {
         <input type="text" value="${esc(c.name)}" data-course-name="${c.id}">
         <button class="btn sm danger" data-action="del-course" data-id="${c.id}">✕</button></div>`).join('')}</div>
     </section>
+    ${liveState ? '' : termsPanel()}
+    <section class="panel">
+      <h2>Offline</h2>
+      <div id="offlineBox"><p class="small muted">Checking…</p></div>
+    </section>
     <section class="panel">
       <h2>Notifications</h2>
       <div id="pushBox"><p class="small muted">Checking…</p></div>
@@ -1841,7 +1849,9 @@ const lecReviewed = o => !!state.lectures[occKey(o)];
 function lectureBacklog() {
   const t = today(), ts = iso(t), nm = nowMin();
   const from = parseISO(state.settings.lectureTrackFrom || ts);
-  return occurrences(from, t).filter(o => o.e.type === 'lecture' && (o.date < ts || toMin(o.e.end) <= nm) && !lecReviewed(o));
+  const carried = (state.lectureCarry || []).filter(c => !state.lectures[c.key]).map(c => ({
+    e: { id: c.key.split('|')[0], title: c.title, start: c.start, end: '', courseId: c.courseId, type: 'lecture' }, date: c.date, d: parseISO(c.date), carried: true }));
+  return [...carried, ...occurrences(from, t).filter(o => o.e.type === 'lecture' && (o.date < ts || toMin(o.e.end) <= nm) && !lecReviewed(o))];
 }
 function backlogGroups(list = lectureBacklog()) {
   const m = new Map();
@@ -2067,7 +2077,7 @@ document.addEventListener('keydown', e => {
 const VAPID_PUBLIC = 'BAxsOpdjkB3BMo68NopW540Zn6mv3fborxnPAp545CSHn4Gx2FKKYNkcjCIKHMUhHfLN9HrL-h9dc6eOqTXEDtA';
 let swReg = null;
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').then(r => { swReg = r; }).catch(() => {});
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => { swReg = r; r.update().catch(() => {}); }).catch(() => {});
   navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'open' && VIEWS[e.data.hash]) location.hash = e.data.hash; });
 }
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -2218,6 +2228,294 @@ function openCC(id) {
   el.addEventListener('change', e => { if (e.target.dataset.cc === 'status') setPP(id, { status: e.target.value }); });
   $('[data-cc="close"]', el).focus();
 }
+/* ---------------- terms: archive & start a new term ----------------
+   "Start a new term" files the whole current term away (read-only) in state.archive, carries over
+   what's unfinished, and clears the timetable ready for the new term's spreadsheets. */
+let liveState = null;   // set while looking at an archived term: the real data waits here
+const LENT_2027 = { termName: 'Lent 2027', week1Start: '2027-01-21', numWeeks: 8 };   // full term Tue 19 Jan – Fri 19 Mar 2027
+function openRollover() {
+  openForm({
+    title: `Start a new term (archive ${state.settings.termName})`,
+    values: { ...LENT_2027, carryPapers: true, carryTasks: true, carryLectures: true, carryLabs: true },
+    fields: [
+      { key: 'termName', label: 'New term name', required: true },
+      { key: 'week1Start', label: 'Thursday of Week 1', type: 'date', hint: 'Lent 2027: Thu 21 Jan' },
+      { key: 'numWeeks', label: 'Number of weeks', type: 'number', min: 1 },
+      { key: 'carryPapers', label: 'Carry over unfinished examples papers', type: 'checkbox' },
+      { key: 'carryTasks', label: 'Carry over open tasks', type: 'checkbox' },
+      { key: 'carryLectures', label: 'Carry over lectures not caught up on', type: 'checkbox' },
+      { key: 'carryLabs', label: 'Turn lab follow-ups into tasks', type: 'checkbox' },
+    ],
+    onSave: x => {
+      if (!x.termName || !x.week1Start || !(x.numWeeks > 0)) return 'Fill in the term name, Week 1 date and number of weeks.';
+      if (!confirm(`Archive ${state.settings.termName} and start ${x.termName}?\n\nThe timetable is cleared (re-import the new spreadsheets afterwards). Everything from ${state.settings.termName} stays viewable under Settings → Terms.`)) return 'Cancelled.';
+      startNewTerm(x);
+    },
+  });
+}
+function startNewTerm(x) {
+  const old = state.settings.termName, todayS = iso(today());
+  const snap = JSON.parse(JSON.stringify(state));
+  delete snap.archive; delete snap.pushSubs;
+  // carry-overs, worked out before anything is removed
+  const lec = x.carryLectures ? lectureBacklog().map(o => ({ key: occKey(o), title: o.e.title, date: o.date, start: o.e.start, courseId: o.e.courseId || '' })) : [];
+  const labTasks = [];
+  if (x.carryLabs) for (const [key, rec] of Object.entries(state.labs || {})) {
+    if (!rec || rec.status !== 'followup' || linkedTasks('lab', key).some(t => !t.done)) continue;
+    const o = findOcc(key);
+    if (o) labTasks.push({ id: uid(), title: `Follow-up: ${o.e.title} (${fmtDate(o.d)})`, due: '', time: '', courseId: o.e.courseId || 'labs', priority: 'med', done: false, notes: rec.notes || '' });
+  }
+  const keptPapers = x.carryPapers ? state.papers.filter(p => !isDone(p)) : [];
+  const keptIds = new Set(keptPapers.map(p => p.id));
+  const tasks = (x.carryTasks ? state.tasks.filter(t => !t.done) : state.tasks.filter(t => !t.done && t.link && t.link.kind === 'lab' && x.carryLabs)).map(t => {
+    if (t.link && (t.link.kind !== 'paper' || !keptIds.has(t.link.key))) {
+      t.notes = [t.notes, `From ${old}: ${linkLabel(t, false)}`].filter(Boolean).join('\n');
+      delete t.link;
+    }
+    return t;
+  });
+  state.archive = [...(state.archive || []), { name: old, archivedOn: todayS, data: snap }];
+  state.papers = keptPapers;
+  state.tasks = [...tasks, ...labTasks];
+  state.lectureCarry = lec;
+  state.lectures = {};
+  state.labs = {};
+  state.supNotes = {};
+  state.events = state.events.filter(e => e.repeat !== 'weekly' && e.date && e.date >= todayS && !e.source);   // keep only your own future one-offs
+  Object.assign(state.settings, { termName: x.termName, week1Start: x.week1Start, numWeeks: +x.numWeeks,
+    lectureTrackFrom: iso(addDays(parseISO(x.week1Start), -2)) });
+  ui.week = null; ui.day = null;
+  setTimeout(() => toast(`✓ ${old} archived — ${x.termName} started`), 50);
+}
+async function viewArchive(i) {
+  const a = (state.archive || [])[i];
+  if (!a) return;
+  if (dirty) await flushSave();
+  liveState = state;
+  state = JSON.parse(JSON.stringify(a.data));
+  state.archive = []; state.pushSubs = [];
+  migrate();
+  ui.week = null; ui.day = null; ui.archiveName = a.name;
+  location.hash = 'dashboard'; render();
+}
+function leaveArchive() {
+  if (!liveState) return;
+  state = liveState; liveState = null; ui.week = null; ui.day = null;
+  location.hash = 'settings'; render();
+}
+const archiveBanner = () => liveState ? `<div class="archive-bar"><span>📦 Viewing <strong>${esc(ui.archiveName)}</strong> — read-only</span><span class="spacer"></span><button type="button" class="btn sm" data-action="leave-archive">Back to ${esc(liveState.settings.termName)}</button></div>` : '';
+function termsPanel() {
+  const arch = (state.archive || []);
+  return `<section class="panel">
+    <h2>Terms</h2>
+    <p class="small">Current term: <strong>${esc(state.settings.termName)}</strong></p>
+    ${arch.length ? `<div class="small muted">Past terms (read-only):</div><div class="row" style="margin:6px 0 12px">${arch.map((a, i) =>
+      `<button type="button" class="btn sm" data-action="view-archive" data-i="${i}">📦 ${esc(a.name)}</button>`).join('')}</div>` : ''}
+    <button type="button" class="btn" data-action="new-term">Start a new term…</button>
+    <p class="muted small">Archives this term (still viewable here), carries over what's unfinished, and clears the timetable for the new term's spreadsheets.</p>
+  </section>`;
+}
+
+/* ---------------- Christmas vacation plan ----------------
+   A week-by-week checklist built from what's left: examples questions (and flagged ones to redo),
+   lectures to catch up on, and past papers (one per module per week, newest first).
+   Items point at the real thing, so ticking here ticks the question / lecture / past paper too. */
+const VAC_DEFAULT = () => ({ name: 'Christmas vacation', start: '2026-12-07', end: '2027-01-15', weekendsOff: true,
+  offRanges: [['2026-12-22', '2027-01-01']], offDays: [], onDays: [], items: [], built: '' });
+const vac = () => state.vacation || (state.vacation = VAC_DEFAULT());
+function vacOff(ds) {
+  const v = vac();
+  if (v.offDays.includes(ds)) return true;
+  if (v.onDays.includes(ds)) return false;
+  const wd = parseISO(ds).getDay();
+  if (v.weekendsOff && (wd === 0 || wd === 6)) return true;
+  return v.offRanges.some(([a, b]) => ds >= a && ds <= b);
+}
+function vacWeeks() {
+  const v = vac(), out = [];
+  const s = parseISO(v.start), e = parseISO(v.end);
+  let mon = addDays(s, -((s.getDay() + 6) % 7));
+  for (; mon <= e; mon = addDays(mon, 7)) {
+    const days = Array.from({ length: 7 }, (_, i) => addDays(mon, i));
+    const inRange = days.filter(d => d >= s && d <= e).map(iso);
+    out.push({ key: iso(mon), mon, days: days.map(iso), inRange, work: inRange.filter(d => !vacOff(d)).length });
+  }
+  return out;
+}
+const vacPaper = id => state.papers.find(p => p.id === id);
+function vacItemDone(it) {
+  if (it.kind === 'lec') return it.keys.every(k => state.lectures[k]);
+  if (it.kind === 'q') { const p = vacPaper(it.paperId); return !p || it.qs.every(i => p.questions[i] && p.questions[i].done); }
+  if (it.kind === 'pp') return ppRec(it.id).status === 'done';
+  return !!it.done;
+}
+function vacItemProgress(it) {
+  if (it.kind === 'lec') return [it.keys.filter(k => state.lectures[k]).length, it.keys.length];
+  if (it.kind === 'q') { const p = vacPaper(it.paperId); return p ? [it.qs.filter(i => p.questions[i] && p.questions[i].done).length, it.qs.length] : [1, 1]; }
+  return [vacItemDone(it) ? 1 : 0, 1];
+}
+const qRange = qs => { const n = qs.map(i => i + 1), out = []; for (let i = 0; i < n.length; i++) { let j = i; while (j + 1 < n.length && n[j + 1] === n[j] + 1) j++; out.push(j > i ? `${n[i]}–${n[j]}` : `${n[i]}`); i = j; } return 'Q' + out.join(', '); };
+/** (Re)build the plan: keep finished items where they are, spread everything left over the remaining working weeks. */
+function buildVacation() {
+  const v = vac(), weeks = vacWeeks(), now = iso(addDays(today(), -((today().getDay() + 6) % 7)));
+  const open = weeks.filter(w => w.key >= now && w.work > 0);
+  const kept = v.items.filter(vacItemDone);   // unfinished items are re-planned from scratch
+  const keptKeys = new Set(kept.flatMap(it => it.kind === 'lec' ? it.keys : it.kind === 'pp' ? [it.ccId] : it.kind === 'redo' ? it.qs.map(i => `${it.paperId}#${i}`) : []));
+  // what's left
+  const lectures = lectureBacklog().filter(o => !keptKeys.has(occKey(o))).sort((a, b) => a.date.localeCompare(b.date));
+  const qs = [], redo = [];
+  for (const p of state.papers.filter(p => !isDone(p)).sort(byDue)) p.questions.forEach((q, i) => { if (!q.done) qs.push({ p, i }); });
+  for (const p of state.papers.slice().sort(byDue)) p.questions.forEach((q, i) => { if (q.done && q.flag && !keptKeys.has(`${p.id}#${i}`)) redo.push({ p, i }); });
+  const totalWork = open.reduce((a, w) => a + w.work, 0);
+  const spread = list => {   // split a list across weeks in proportion to working days, keeping order
+    const out = open.map(() => []); let acc = 0, idx = 0;
+    open.forEach((w, k) => { acc += w.work; const upto = Math.round(list.length * acc / (totalWork || 1)); while (idx < upto) out[k].push(list[idx++]); });
+    return out;
+  };
+  const lecW = spread(lectures), qW = spread(qs), redoW = spread(redo);
+  // past papers: one per module per week (weeks with at least 3 working days), newest year first
+  const planned = new Set(kept.filter(it => it.kind === 'pp').map(it => it.ccId));
+  const queue = [];
+  for (const y of CC_YEARS) for (const m of CC_MODULES) { const id = ccId(m.code, y); if (!ppRec(id).status && !planned.has(id)) queue.push(id); }
+  const items = [...kept];
+  open.forEach((w, k) => {
+    const byTitle = new Map();
+    for (const o of lecW[k]) { if (!byTitle.has(o.e.title)) byTitle.set(o.e.title, []); byTitle.get(o.e.title).push(o); }
+    for (const [title, os] of byTitle) items.push({ id: uid(), week: w.key, kind: 'lec', title, courseId: os[0].e.courseId || '', keys: os.map(occKey), dates: os.map(o => o.date) });
+    const group = (list, kind) => { const m = new Map(); for (const { p, i } of list) { if (!m.has(p.id)) m.set(p.id, []); m.get(p.id).push(i); }
+      for (const [pid, ix] of m) items.push({ id: uid(), week: w.key, kind, paperId: pid, qs: ix }); };
+    group(qW[k], 'q'); group(redoW[k], 'redo');
+    if (w.work >= 3) for (const m of CC_MODULES) { const i = queue.findIndex(id => id.includes(`-${m.code}-`)); if (i >= 0) { const cc = queue.splice(i, 1)[0]; items.push({ id: 'pp:' + cc, week: w.key, kind: 'pp', ccId: cc }); } }
+  });
+  v.items = items; v.built = iso(today());
+}
+function vacItemHTML(it) {
+  const done = vacItemDone(it), [a, b] = vacItemProgress(it);
+  let title = '', sub = '', extra = '';
+  if (it.kind === 'lec') { title = `🎓 Catch up: ${esc(it.title)}`; sub = it.dates.map(d => fmtDate(parseISO(d))).join(', '); extra = '<a class="btn sm" href="#lectures">Handouts</a>'; }
+  else if (it.kind === 'q' || it.kind === 'redo') {
+    const p = vacPaper(it.paperId);
+    title = `${it.kind === 'redo' ? '⚑ Redo' : '✏️'} ${p ? esc(shortPaper(p)) : '(removed paper)'} — ${qRange(it.qs)}`;
+    sub = p ? esc(course(p.courseId).name) : '';
+    extra = p && p.pdf ? `<button type="button" class="btn sm" data-action="view-pdf" data-id="${p.id}">📄</button>` : '';
+  } else if (it.kind === 'pp') { const [, , code, year] = it.ccId.split('-'); title = `📜 ${code} Tripos ${year}`; sub = (CC_MODULES.find(m => m.code === code) || {}).name || ''; extra = `<button type="button" class="btn sm" data-action="pp-open" data-id="${it.ccId}">Open</button>`; }
+  return `<div class="vac-item ${done ? 'done' : ''}">
+    <input type="checkbox" data-action="vac-toggle" data-id="${esc(it.id)}" ${done ? 'checked' : ''} aria-label="Done">
+    <div class="vac-main"><div>${title}</div><div class="small muted">${sub}${b > 1 ? ` · ${a}/${b}` : ''}</div></div>${extra}</div>`;
+}
+function toggleVacItem(id, on) {
+  const it = vac().items.find(x => x.id === id);
+  if (!it) return;
+  if (it.kind === 'lec') for (const k of it.keys) { if (on) state.lectures[k] = true; else delete state.lectures[k]; }
+  else if (it.kind === 'q') { const p = vacPaper(it.paperId); if (p) { it.qs.forEach(i => { if (p.questions[i]) p.questions[i].done = on; }); syncPaper(p, true); } }
+  else if (it.kind === 'pp') setPP(it.ccId, { status: on ? 'done' : '' });
+  else it.done = on;
+  save(); render();
+}
+const vacRange = w => { const a = parseISO(w.inRange[0]), b = parseISO(w.inRange[w.inRange.length - 1]); return `${a.getDate()} ${MONTHS[a.getMonth()]} – ${b.getDate()} ${MONTHS[b.getMonth()]}`; };
+function vacWeekCard(w, n, { compact = false } = {}) {
+  const items = vac().items.filter(it => it.week === w.key);
+  const done = items.filter(vacItemDone).length, nowKey = iso(addDays(today(), -((today().getDay() + 6) % 7)));
+  const past = w.key < nowKey, cur = w.key === nowKey;
+  const order = { lec: 0, q: 1, redo: 2, pp: 3 };
+  const list = items.slice().sort((x, y) => vacItemDone(x) - vacItemDone(y) || order[x.kind] - order[y.kind]);
+  return `<section class="panel vac-week ${cur ? 'cur' : ''} ${past ? 'past' : ''}">
+    <div class="section-head"><h2>${compact ? 'This week' : `Week ${n}`} <span class="small muted">${vacRange(w)}</span></h2><span class="spacer"></span>
+      <span class="small ${items.length && done === items.length ? 'ok-text' : 'muted'}">${items.length ? `${done}/${items.length} done` : ''}</span></div>
+    ${compact ? '' : `<div class="vac-days">${w.days.map(ds => { const inR = w.inRange.includes(ds); const off = !inR || vacOff(ds); const d = parseISO(ds);
+      return `<button type="button" class="vac-day ${off ? 'off' : ''} ${ds === iso(today()) ? 'today' : ''}" ${inR ? `data-action="vac-day" data-d="${ds}"` : 'disabled'} title="${fmtDate(d)} — ${off ? 'day off' : 'working day'}${inR ? ' (tap to change)' : ''}">${DAYS[d.getDay()].slice(0, 2)}<b>${d.getDate()}</b></button>`; }).join('')}
+      <span class="small muted">${w.work} working day${w.work === 1 ? '' : 's'}</span></div>`}
+    ${list.length ? list.map(vacItemHTML).join('') : `<div class="empty small">${w.work ? 'Nothing planned.' : 'Time off 🎄'}</div>`}
+    ${past && done < items.length ? `<div class="small warn-text">⚠ ${items.length - done} not done — “Rebuild plan” moves them into the weeks ahead.</div>` : ''}
+  </section>`;
+}
+function viewVacation() {
+  const v = vac(), weeks = vacWeeks(), work = weeks.reduce((a, w) => a + w.work, 0);
+  const all = v.items, done = all.filter(vacItemDone).length;
+  return `<div class="section-head"><h2>${esc(v.name)}</h2><span class="small muted">${fmtDate(parseISO(v.start))} – ${fmtDate(parseISO(v.end))} · ${work} working days</span>
+      <span class="spacer"></span>${all.length ? `<span class="small">${done}/${all.length} done</span>` : ''}
+      <button type="button" class="btn ${all.length ? '' : 'primary'}" data-action="vac-build">${all.length ? '↻ Rebuild plan' : 'Build my plan'}</button></div>
+    <details class="panel vac-settings"><summary><strong>Dates &amp; days off</strong> <span class="small muted">— tap any day below to switch it between working and off</span></summary>
+      <div class="form-grid" id="vacForm" style="margin-top:10px">
+        <label class="f">Starts<input type="date" name="start" value="${v.start}"></label>
+        <label class="f">Ends<input type="date" name="end" value="${v.end}"></label>
+        <label class="f row" style="gap:6px;align-items:center"><input type="checkbox" name="weekendsOff" ${v.weekendsOff ? 'checked' : ''}> Weekends off</label>
+      </div>
+      <p class="small muted">Holiday: ${v.offRanges.map(([a, b]) => `${fmtDate(parseISO(a))} – ${fmtDate(parseISO(b))}`).join(', ')}. After changing days, press Rebuild plan to re-spread the work.</p>
+    </details>
+    ${all.length ? '' : `<div class="panel"><p>Build a week-by-week plan from what's left: <strong>${lectureBacklog().length}</strong> lectures to catch up, <strong>${state.papers.filter(p => !isDone(p)).reduce((a, p) => a + p.total - p.done, 0)}</strong> examples questions (plus ⚑ flagged ones to redo), and past papers — one per module each full week, newest first.</p></div>`}
+    <div class="vac-weeks">${weeks.map((w, i) => vacWeekCard(w, i + 1)).join('')}</div>`;
+}
+/** Dashboard panel while the vacation is on (from a week before it starts). */
+function dashVacation() {
+  const v = state.vacation;
+  if (!v || !v.items.length) return '';
+  const t = iso(today());
+  if (t < iso(addDays(parseISO(v.start), -7)) || t > v.end) return '';
+  const nowKey = iso(addDays(today(), -((today().getDay() + 6) % 7)));
+  const w = vacWeeks().find(x => x.key === nowKey) || vacWeeks()[0];
+  return vacWeekCard(w, 0, { compact: true }).replace('<section class="panel vac-week', '<section class="panel vac-week dash-vac').replace('</h2>', ' <a href="#vacation" class="small">Plan →</a></h2>');
+}
+
+
+/* ---------------- offline: keep every PDF on this device ----------------
+   Handouts, data books, examples papers and the search index are saved in this device's cache
+   (the same one used when you open a PDF), so they all open with no signal. Only new or changed
+   files are downloaded. Turn it off per device in Settings. */
+const OFFLINE_KEY = 'planner-offline-all';
+const offlineOn = () => { try { return localStorage.getItem(OFFLINE_KEY) !== 'off'; } catch { return true; } };
+const off = { total: 0, have: 0, bytes: 0, busy: false, err: '' };
+function offlineTargets() {
+  if (!state) return [];
+  return [
+    ...(state.library || []).map(d => ({ path: d.path, sha: d.sha, size: d.size || 0 })),
+    ...state.papers.filter(p => p.pdf).map(p => ({ path: p.pdf, sha: p.pdfSha, size: 0 })),
+    ...(state.searchIndex ? [{ ...state.searchIndex, size: 0 }] : []),
+  ].filter(d => d.path);
+}
+async function offlineSync() {
+  if (off.busy || !offlineOn() || backend !== 'github' || liveState || !('caches' in window) || !navigator.onLine) return fillOfflineBox();
+  off.busy = true; off.err = '';
+  try {
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    const cache = await caches.open(PDF_CACHE);
+    const targets = offlineTargets();
+    off.total = targets.length; off.have = 0; off.bytes = 0;
+    for (const d of targets) {
+      if (!offlineOn() || !navigator.onLine) break;
+      let hit = await cache.match(pdfCacheKey(d));
+      if (!hit) {
+        try { await pdfBytes(d); hit = true; } catch (err) { off.err = err.message; continue; }
+      }
+      off.have++; off.bytes += d.size;
+      if (off.have % 4 === 0) fillOfflineBox();
+    }
+  } catch (err) { off.err = err.message; }
+  off.busy = false;
+  fillOfflineBox();
+}
+async function fillOfflineBox() {
+  const box = $('#offlineBox');
+  if (!box) return;
+  const on = offlineOn();
+  let used = '';
+  try { if (navigator.storage && navigator.storage.estimate) { const e = await navigator.storage.estimate(); used = ` · using ${fmtSize(e.usage || 0)} on this device`; } } catch { /* ignore */ }
+  const n = offlineTargets().length;
+  box.innerHTML = `<label class="row small" style="gap:8px"><input type="checkbox" data-offline-toggle ${on ? 'checked' : ''}> Keep every PDF on this device (${n} files) so they open with no signal</label>
+    <p class="small ${off.err ? 'warn-text' : 'muted'}">${!on ? 'Off — only PDFs you open are saved.'
+      : off.busy ? `Saving for offline… ${off.have}/${off.total}`
+      : off.total && off.have >= off.total ? `✓ All ${off.total} files saved for offline${used}`
+      : off.total ? `${off.have}/${off.total} saved${off.err ? ` — ${esc(off.err)}; will retry when you're online` : ''}${used}`
+      : backend !== 'github' ? 'Needs the GitHub connection.' : `Checking…${used}`}</p>
+    <p class="small muted">The app itself also works offline once it has been opened; changes you make offline upload when you're back online.</p>`;
+}
+document.addEventListener('change', e => {
+  if (!e.target.matches || !e.target.matches('[data-offline-toggle]')) return;
+  try { localStorage.setItem(OFFLINE_KEY, e.target.checked ? 'on' : 'off'); } catch { /* ignore */ }
+  if (e.target.checked) offlineSync(); else fillOfflineBox();
+});
+window.addEventListener('online', () => setTimeout(offlineSync, 3000));
+
 /* ---------------- sidebar: phone drawer & collapse ---------------- */
 function setNav(open) {
   document.body.classList.toggle('nav-open', open);
@@ -2265,7 +2563,7 @@ const setMini = on => {
 try { if (localStorage.getItem(SIDE_KEY)) setMini(true); } catch { /* ignore */ }
 $('#sideCollapse').addEventListener('click', () => { setMini(!document.body.classList.contains('side-mini')); if (currentTab() === 'timetable') fitTimetable(); });
 
-const VIEWS = { pastpapers: viewPastPapers, search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
+const VIEWS = { vacation: viewVacation, pastpapers: viewPastPapers, search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
 const currentTab = () => { const h = location.hash.slice(1); return VIEWS[h] ? h : 'dashboard'; };
 
 function render() {
@@ -2281,9 +2579,9 @@ function render() {
   $('#termLabel').textContent = `${state.settings.termName} · ${wk >= 1 && wk <= state.settings.numWeeks ? 'Week ' + wk : weekLabel(wk)}`;
   if (backend === 'setup') { $('#view').innerHTML = viewConnect(); return; }
   const keepScroll = $('.tt-wrap') ? $('.tt-wrap').scrollTop : null;
-  $('#view').innerHTML = VIEWS[tab]();
+  $('#view').innerHTML = archiveBanner() + VIEWS[tab]();
   if (tab === 'timetable') fitTimetable(keepScroll);
-  if (tab === 'settings') fillPushBox();
+  if (tab === 'settings') { fillPushBox(); fillOfflineBox(); }
   updateBadges();
 }
 /** Little counts in the sidebar: papers due within 3 days, labs needing attention, lectures to catch up. */
@@ -2436,6 +2734,19 @@ document.addEventListener('click', e => {
       'wl-course': () => { ui.paperCourse = ui.paperCourse === actEl.dataset.id ? '' : actEl.dataset.id; render(); },
       'lec-review': () => { state.lectures[actEl.dataset.key] = true; save(); render(); },
       'pp-open': () => openCC(actEl.dataset.id),
+      'new-term': () => openRollover(),
+      'view-archive': () => viewArchive(+actEl.dataset.i),
+      'leave-archive': () => leaveArchive(),
+      'vac-build': () => {
+        if (vac().items.length && !confirm('Re-spread everything not yet done over the weeks from now on? Finished items stay where they are.')) return;
+        buildVacation(); save(); render();
+      },
+      'vac-day': () => {
+        const v = vac(), ds = actEl.dataset.d, off = vacOff(ds);
+        v.offDays = v.offDays.filter(x => x !== ds); v.onDays = v.onDays.filter(x => x !== ds);
+        if (off !== vacOff(ds)) { /* removing an override already flipped it */ } else (off ? v.onDays : v.offDays).push(ds);
+        save(); render();
+      },
       'lec-review-all': () => { for (const o of lectureBacklog()) if (o.e.title === actEl.dataset.title) state.lectures[occKey(o)] = true; save(); render(); },
       'view-pdf': () => { const p = state.papers.find(x => x.id === actEl.dataset.id); if (p) openPdf(p); },
       'edit-paper': () => { const p = state.papers.find(x => x.id === actEl.dataset.id); if (p) openPaperForm(p); },
@@ -2510,6 +2821,14 @@ document.addEventListener('change', e => {
   else if (act === 'paper-course') { ui.paperCourse = t.value; render(); }
   else if (act === 'lab-filter') { ui.labFilter = t.value; render(); }
   else if (act === 'pp-filter') { ui.ppFilter = t.value; render(); }
+  else if (act === 'vac-toggle') toggleVacItem(t.dataset.id, t.checked);
+  else if (t.closest('#vacForm')) {
+    const v = vac();
+    if (t.name === 'weekendsOff') v.weekendsOff = t.checked;
+    else if (t.value) v[t.name] = t.value;
+    if (v.end < v.start) v.end = v.start;
+    save(); render();
+  }
   else if (t.closest('#termForm')) {
     const v = t.type === 'number' ? +t.value : t.value;
     if ((t.name === 'week1Start' || t.name === 'lectureTrackFrom') && !t.value) return;
@@ -2594,6 +2913,7 @@ function buildICS() {
   await load();
   if (!location.hash) location.hash = '#dashboard';
   render();
+  setTimeout(offlineSync, 4000);   // save any new PDFs for offline, in the background
   // keep the "now" markers fresh
   setInterval(() => { if ($('#modal').hidden && ['dashboard', 'timetable'].includes(currentTab())) render(); }, 60_000);
 })();

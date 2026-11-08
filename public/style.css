@@ -821,3 +821,29 @@ body.hdr-hidden .topbar { transform: translateY(calc(-100% - 4px)); }
 @media (min-width: 721px) {
   body.hdr-hidden .sidebar { top: 0; height: 100vh; height: 100dvh; }
 }
+
+/* ---------- archive banner ---------- */
+.archive-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; padding: 10px 14px; border-radius: 10px;
+  background: color-mix(in srgb, var(--gold) 18%, var(--panel)); border: 1px solid var(--gold); }
+
+/* ---------- vacation plan ---------- */
+.vac-settings summary { cursor: pointer; }
+.vac-settings { margin-bottom: 16px; }
+.vac-weeks { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.vac-week.cur { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+.vac-week.past { opacity: .8; }
+.vac-week h2 { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.vac-days { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.vac-day { display: flex; flex-direction: column; align-items: center; width: 36px; padding: 3px 0; border-radius: 7px; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--ok) 16%, var(--panel)); color: inherit; font: inherit; font-size: 10.5px; line-height: 1.2; cursor: pointer; }
+.vac-day b { font-size: 13px; }
+.vac-day.off { background: var(--panel); color: var(--muted); text-decoration: line-through; }
+.vac-day.today { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+.vac-day:disabled { opacity: .3; cursor: default; }
+.vac-item { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); }
+.vac-item input { width: 18px; height: 18px; flex: none; }
+.vac-main { flex: 1; min-width: 0; }
+.vac-item.done .vac-main > div:first-child { text-decoration: line-through; color: var(--muted); }
+.ok-text { color: var(--ok); }
+.warn-text { color: var(--warn); margin-top: 6px; }
+@media (max-width: 720px) { .vac-weeks { grid-template-columns: 1fr; } }
