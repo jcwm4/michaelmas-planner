@@ -2016,26 +2016,45 @@ function searchResults(q) {
 function viewSearch() {
   if (!searchIdx && state.searchIndex) loadSearchIndex().then(() => { if (currentTab() === 'search') updateSearch(); }).catch(() => {});
   return `<section class="panel">
-    <div class="section-head"><h2>Search</h2></div>
-    <input type="search" id="searchBox" class="search-box" placeholder="e.g. Thevenin, Mohr's circle, EP3, supervisor's name…" value="${esc(ui.q)}" autocomplete="off" spellcheck="false" aria-label="Search">
+    <div class="section-head"><h2>${ui.q.trim() ? `Results for “${esc(ui.q.trim())}”` : 'Search'}</h2></div>
     <div id="searchResults" aria-live="polite">${searchResults(ui.q)}</div>
   </section>`;
 }
-function updateSearch() { const r = $('#searchResults'); if (r) r.innerHTML = searchResults(ui.q); }
+function updateSearch() {
+  const r = $('#searchResults'); if (r) r.innerHTML = searchResults(ui.q);
+  const h = $('#view .section-head h2'); if (h && currentTab() === 'search') h.textContent = ui.q.trim() ? `Results for “${ui.q.trim()}”` : 'Search';
+}
 let searchTimer = 0;
 document.addEventListener('input', e => {
   if (e.target.id !== 'searchBox') return;
   ui.q = e.target.value;
+  if (ui.q.trim() && currentTab() !== 'search') { location.hash = 'search'; return; }   // results page; the box keeps focus
   clearTimeout(searchTimer); searchTimer = setTimeout(updateSearch, 120);
 });
+$('#hsearch').addEventListener('submit', e => {
+  e.preventDefault();
+  if (!ui.q.trim()) return;
+  if (currentTab() !== 'search') location.hash = 'search';
+  if (isNarrow()) $('#searchBox').blur();   // hide the phone keyboard to show the results
+});
+$('#hsearchBtn').addEventListener('click', () => {
+  const b = $('#searchBox');
+  if (document.activeElement === b && ui.q.trim()) { $('#hsearch').requestSubmit(); return; }
+  b.focus();
+});
+$('#searchBox').addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  e.stopPropagation();
+  if (e.target.value) { e.target.value = ''; ui.q = ''; updateSearch(); } else e.target.blur();
+});
+$('#searchBox').addEventListener('blur', () => { $('#hsearch').classList.toggle('open', currentTab() === 'search' && !!ui.q); });
 document.addEventListener('keydown', e => {
   // "/" or Cmd/Ctrl+K jumps to search
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
   if (viewer || !$('#modal').hidden) return;
   if ((e.key === '/' && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) {
     e.preventDefault();
-    if (currentTab() !== 'search') location.hash = 'search';
-    setTimeout(() => { const b = $('#searchBox'); if (b) { b.focus(); b.select(); } }, 30);
+    const b = $('#searchBox'); b.focus(); b.select();
   }
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.search-item')) { e.preventDefault(); e.target.click(); }
 });
@@ -2199,12 +2218,39 @@ function openCC(id) {
   el.addEventListener('change', e => { if (e.target.dataset.cc === 'status') setPP(id, { status: e.target.value }); });
   $('[data-cc="close"]', el).focus();
 }
+/* ---------------- sidebar: phone drawer & collapse ---------------- */
+function setNav(open) {
+  document.body.classList.toggle('nav-open', open);
+  $('#scrim').hidden = !open;
+  $('#menuBtn').setAttribute('aria-expanded', String(open));
+}
+$('#menuBtn').addEventListener('click', () => setNav(!document.body.classList.contains('nav-open')));
+$('#scrim').addEventListener('click', () => setNav(false));
+$('#sidebar').addEventListener('click', e => { if (e.target.closest('a')) setNav(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('nav-open')) { setNav(false); $('#menuBtn').focus(); } });
+const SIDE_KEY = 'planner-side-mini';
+const setMini = on => {
+  document.body.classList.toggle('side-mini', on);
+  const b = $('#sideCollapse');
+  b.setAttribute('aria-label', on ? 'Expand sidebar' : 'Collapse sidebar'); b.title = on ? 'Expand sidebar' : 'Collapse sidebar';
+  $('.ico', b).textContent = on ? '»' : '«';
+  try { localStorage.setItem(SIDE_KEY, on ? '1' : ''); } catch { /* private mode */ }
+};
+try { if (localStorage.getItem(SIDE_KEY)) setMini(true); } catch { /* ignore */ }
+$('#sideCollapse').addEventListener('click', () => { setMini(!document.body.classList.contains('side-mini')); if (currentTab() === 'timetable') fitTimetable(); });
+
 const VIEWS = { pastpapers: viewPastPapers, search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
 const currentTab = () => { const h = location.hash.slice(1); return VIEWS[h] ? h : 'dashboard'; };
 
 function render() {
   const tab = currentTab();
-  document.querySelectorAll('#tabs a').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
+  document.querySelectorAll('#sidebar a[data-tab]').forEach(a => {
+    a.classList.toggle('active', a.dataset.tab === tab);
+    if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+  const sb = $('#searchBox');
+  if (sb && document.activeElement !== sb) sb.value = tab === 'search' ? ui.q : '';
+  $('#hsearch').classList.toggle('open', tab === 'search' && !!ui.q);
   const wk = termWeek(today());
   $('#termLabel').textContent = `${state.settings.termName} · ${wk >= 1 && wk <= state.settings.numWeeks ? 'Week ' + wk : weekLabel(wk)}`;
   if (backend === 'setup') { $('#view').innerHTML = viewConnect(); return; }
@@ -2212,7 +2258,18 @@ function render() {
   $('#view').innerHTML = VIEWS[tab]();
   if (tab === 'timetable') fitTimetable(keepScroll);
   if (tab === 'settings') fillPushBox();
-  if (tab === 'search') { const b = $('#searchBox'); if (b && !isNarrow()) { b.focus(); b.setSelectionRange(b.value.length, b.value.length); } }
+  updateBadges();
+}
+/** Little counts in the sidebar: papers due within 3 days, labs needing attention, lectures to catch up. */
+function updateBadges() {
+  if (backend === 'setup' || !state) return;
+  const soon = iso(addDays(today(), 3));
+  const set = (k, n, label) => { const b = $(`[data-badge="${k}"]`); if (b) { b.textContent = n || ''; b.title = n ? label : ''; } };
+  try {
+    set('papers', state.papers.filter(p => !isDone(p) && p.due && p.due.slice(0, 10) <= soon).length, 'papers due in the next 3 days');
+    set('labs', allLabs().filter(l => l.cls === 'todo' || l.preDue).length, 'labs needing attention');
+    set('lectures', lectureBacklog().length, 'lectures to catch up on');
+  } catch { /* never let badges break the page */ }
 }
 
 /** Size the timetable to the window so the whole day (top and bottom) is reachable by scrolling inside it. */

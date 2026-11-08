@@ -18,32 +18,57 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
-      <img class="crest" src="selwyn-arms.svg" alt="Selwyn College arms" width="40" height="43">
+    <button type="button" class="menu-btn" id="menuBtn" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <a class="brand" href="#dashboard" aria-label="Michaelmas Planner — dashboard">
+      <img class="crest" src="selwyn-arms.svg" alt="" width="40" height="43">
       <div>
         <div class="brand-kicker">Selwyn College · Engineering</div>
         <div class="brand-title">Michaelmas Planner</div>
         <div class="brand-sub" id="termLabel"></div>
       </div>
-    </div>
-    <nav class="tabs" id="tabs">
-      <a href="#dashboard" data-tab="dashboard">Dashboard</a>
-      <a href="#timetable" data-tab="timetable">Timetable</a>
-      <a href="#supervisions" data-tab="supervisions">Supervisions</a>
-      <a href="#papers" data-tab="papers">Examples Papers</a>
-      <a href="#labs" data-tab="labs">Labs</a>
-      <a href="#lectures" data-tab="lectures">Lectures</a>
-      <a href="#databooks" data-tab="databooks">Data Books</a>
-      <a href="#pastpapers" data-tab="pastpapers">Past Papers</a>
-      <a href="#tasks" data-tab="tasks">Planner</a>
-      <a href="#search" data-tab="search" title="Search (press /)">🔍 Search</a>
-      <a href="#settings" data-tab="settings">Settings</a>
-    </nav>
+    </a>
     <div class="save-status" id="saveStatus"></div>
+    <form class="hsearch" id="hsearch" role="search" autocomplete="off">
+      <input type="search" id="searchBox" placeholder="Search papers, handouts, notes…" aria-label="Search" spellcheck="false" enterkeyhint="search">
+      <button type="button" class="hsearch-btn" id="hsearchBtn" aria-label="Search (press /)" title="Search (press /)">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </form>
   </header>
 
-  <div class="conflict-bar" id="conflictBar" hidden></div>
-  <main id="view"></main>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar" aria-label="Pages">
+      <div class="side-group">
+        <div class="side-h">Today</div>
+        <a href="#dashboard" data-tab="dashboard" title="Dashboard"><span class="ico">🏠</span><span class="lbl">Dashboard</span></a>
+        <a href="#timetable" data-tab="timetable" title="Timetable"><span class="ico">📅</span><span class="lbl">Timetable</span></a>
+        <a href="#tasks" data-tab="tasks" title="Planner"><span class="ico">✅</span><span class="lbl">Planner</span></a>
+      </div>
+      <div class="side-group">
+        <div class="side-h">Coursework</div>
+        <a href="#papers" data-tab="papers" title="Examples Papers"><span class="ico">✏️</span><span class="lbl">Examples Papers</span><span class="badge" data-badge="papers"></span></a>
+        <a href="#supervisions" data-tab="supervisions" title="Supervisions"><span class="ico">👥</span><span class="lbl">Supervisions</span></a>
+        <a href="#labs" data-tab="labs" title="Labs"><span class="ico">🔬</span><span class="lbl">Labs</span><span class="badge" data-badge="labs"></span></a>
+      </div>
+      <div class="side-group">
+        <div class="side-h">Library</div>
+        <a href="#lectures" data-tab="lectures" title="Lectures"><span class="ico">🎓</span><span class="lbl">Lectures</span><span class="badge" data-badge="lectures"></span></a>
+        <a href="#databooks" data-tab="databooks" title="Data Books"><span class="ico">📘</span><span class="lbl">Data Books</span></a>
+        <a href="#pastpapers" data-tab="pastpapers" title="Past Papers"><span class="ico">📜</span><span class="lbl">Past Papers</span></a>
+      </div>
+      <div class="side-foot">
+        <a href="#settings" data-tab="settings" title="Settings"><span class="ico">⚙️</span><span class="lbl">Settings</span></a>
+        <button type="button" class="side-collapse" id="sideCollapse" aria-label="Collapse sidebar" title="Collapse sidebar"><span class="ico">«</span><span class="lbl">Collapse</span></button>
+      </div>
+    </nav>
+    <div class="scrim" id="scrim" hidden></div>
+    <div class="content">
+      <div class="conflict-bar" id="conflictBar" hidden></div>
+      <main id="view"></main>
+    </div>
+  </div>
 
   <div class="modal" id="modal" hidden></div>
 
