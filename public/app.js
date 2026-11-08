@@ -2320,9 +2320,13 @@ function termsPanel() {
    A week-by-week checklist built from what's left: examples questions (and flagged ones to redo),
    lectures to catch up on, and past papers (one per module per week, newest first).
    Items point at the real thing, so ticking here ticks the question / lecture / past paper too. */
-const VAC_DEFAULT = () => ({ name: 'Christmas vacation', start: '2026-12-07', end: '2027-01-15', weekendsOff: true,
+const VAC_DEFAULT = () => ({ name: 'Christmas holiday', start: '2026-12-07', end: '2027-01-15', weekendsOff: true,
   offRanges: [['2026-12-22', '2027-01-01']], offDays: [], onDays: [], items: [], built: '' });
-const vac = () => state.vacation || (state.vacation = VAC_DEFAULT());
+const vac = () => {
+  if (!state.vacation) state.vacation = VAC_DEFAULT();
+  if (state.vacation.name === 'Christmas vacation') state.vacation.name = 'Christmas holiday';
+  return state.vacation;
+};
 function vacOff(ds) {
   const v = vac();
   if (v.offDays.includes(ds)) return true;
@@ -2446,7 +2450,7 @@ function viewVacation() {
     ${all.length ? '' : `<div class="panel"><p>Build a week-by-week plan from what's left: <strong>${lectureBacklog().length}</strong> lectures to catch up, <strong>${state.papers.filter(p => !isDone(p)).reduce((a, p) => a + p.total - p.done, 0)}</strong> examples questions (plus ⚑ flagged ones to redo), and past papers — one per module each full week, newest first.</p></div>`}
     <div class="vac-weeks">${weeks.map((w, i) => vacWeekCard(w, i + 1)).join('')}</div>`;
 }
-/** Dashboard panel while the vacation is on (from a week before it starts). */
+/** Dashboard panel while the holiday is on (from a week before it starts). */
 function dashVacation() {
   const v = state.vacation;
   if (!v || !v.items.length) return '';
@@ -2454,7 +2458,7 @@ function dashVacation() {
   if (t < iso(addDays(parseISO(v.start), -7)) || t > v.end) return '';
   const nowKey = iso(addDays(today(), -((today().getDay() + 6) % 7)));
   const w = vacWeeks().find(x => x.key === nowKey) || vacWeeks()[0];
-  return vacWeekCard(w, 0, { compact: true }).replace('<section class="panel vac-week', '<section class="panel vac-week dash-vac').replace('</h2>', ' <a href="#vacation" class="small">Plan →</a></h2>');
+  return vacWeekCard(w, 0, { compact: true }).replace('<section class="panel vac-week', '<section class="panel vac-week dash-vac').replace('</h2>', ' <a href="#holiday" class="small">Plan →</a></h2>');
 }
 
 
@@ -2563,8 +2567,8 @@ const setMini = on => {
 try { if (localStorage.getItem(SIDE_KEY)) setMini(true); } catch { /* ignore */ }
 $('#sideCollapse').addEventListener('click', () => { setMini(!document.body.classList.contains('side-mini')); if (currentTab() === 'timetable') fitTimetable(); });
 
-const VIEWS = { vacation: viewVacation, pastpapers: viewPastPapers, search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
-const currentTab = () => { const h = location.hash.slice(1); return VIEWS[h] ? h : 'dashboard'; };
+const VIEWS = { holiday: viewVacation, pastpapers: viewPastPapers, search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
+const currentTab = () => { const h = location.hash.slice(1) === 'vacation' ? 'holiday' : location.hash.slice(1); return VIEWS[h] ? h : 'dashboard'; };
 
 function render() {
   const tab = currentTab();
