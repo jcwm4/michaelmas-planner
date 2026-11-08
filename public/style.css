@@ -669,3 +669,60 @@ body.pdf-open { overflow: hidden; }
 .upload-btn { cursor: pointer; }
 details.later > summary { cursor: pointer; list-style: revert; }
 @media (hover: none) { .doc-row .icon-btn { opacity: .8; padding: 8px; } }
+
+/* ---------- lecture catch-up ---------- */
+.catchup { margin-bottom: 16px; }
+.catchup.ok { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.count-pill { display: inline-block; min-width: 22px; padding: 0 7px; border-radius: 999px; background: var(--gold); color: #2a1a1e; font-size: 13px; text-align: center; vertical-align: 2px; font-family: inherit; }
+.catchup-group { border-left: 3px solid var(--c); padding: 4px 0 4px 10px; margin: 10px 0; }
+.catchup-group > .row { gap: 8px; flex-wrap: wrap; }
+.lec-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); }
+.lec-row:first-of-type { border-top: 0; }
+
+/* ---------- one-tap paper done ---------- */
+.done-btn.on { background: color-mix(in srgb, var(--ok, #2e8b57) 18%, var(--panel)); border-color: var(--ok, #2e8b57); }
+.paper-acts { white-space: nowrap; }
+.paper-acts .btn { margin: 2px 0; }
+
+/* ---------- workload by course ---------- */
+.workload { margin-bottom: 16px; }
+.wl-row {
+  display: grid; grid-template-columns: minmax(180px, 1.3fr) minmax(90px, 2fr) 56px minmax(150px, 1.6fr) 92px; align-items: center; gap: 10px;
+  width: 100%; padding: 7px 8px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.wl-row:hover, .wl-row.sel { background: color-mix(in srgb, var(--gold) 12%, transparent); }
+.wl-row:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.wl-name { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wl-bar { height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--line) 70%, transparent); overflow: hidden; }
+.wl-bar span { display: block; height: 100%; border-radius: 4px; min-width: 2px; }
+.wl-num { text-align: right; font-variant-numeric: tabular-nums; }
+.wl-next { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wl-st { text-align: right; white-space: nowrap; }
+.wl-st.ok { color: var(--ok, #2e8b57); }
+.wl-st.warn { color: var(--warn); }
+.wl-st.bad { color: #d64545; font-weight: 600; }
+@media (max-width: 720px) {
+  .wl-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name st" "bar num" "next next"; row-gap: 4px; }
+  .wl-name { grid-area: name; } .wl-st { grid-area: st; } .wl-bar { grid-area: bar; } .wl-num { grid-area: num; } .wl-next { grid-area: next; }
+}
+
+/* ---------- search ---------- */
+.search-box { width: 100%; font-size: 17px; padding: 11px 14px; margin-bottom: 8px; }
+.search-list { display: flex; flex-direction: column; gap: 2px; }
+.search-item { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.search-item:hover, .search-item:focus-visible { background: color-mix(in srgb, var(--gold) 12%, transparent); outline: none; }
+.search-item.page { display: flex; gap: 10px; align-items: baseline; padding-left: 12px; }
+.search-item .pg { flex: none; font-size: 12px; font-weight: 600; color: var(--gold); min-width: 38px; }
+.search-doc { margin: 8px 0 12px; }
+.search-doc > .si-title { padding: 0 10px 2px; }
+.si-title { font-weight: 600; }
+#searchResults mark { background: color-mix(in srgb, var(--gold) 45%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+
+#toast {
+  position: fixed; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); z-index: 70; transform: translate(-50%, 140%);
+  display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 32px); padding: 10px 12px 10px 16px;
+  background: #2a1a1e; color: #fff; border: 1px solid var(--gold); border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, .35);
+  transition: transform .25s var(--ease); pointer-events: none;
+}
+#toast.show { transform: translate(-50%, 0); pointer-events: auto; }
+#toast .btn { background: rgba(255, 255, 255, .12); color: #fff; border-color: rgba(255, 255, 255, .3); box-shadow: none; }

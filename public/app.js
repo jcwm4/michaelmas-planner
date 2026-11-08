@@ -44,7 +44,7 @@ const DEFAULT_STATE = () => ({
 });
 
 let state;
-const ui = { week: null, ttView: null, day: null, showPast: false, paperFilter: 'outstanding', paperCourse: '', showDoneTasks: false, labFilter: 'active' };
+const ui = { week: null, ttView: null, day: null, showPast: false, paperFilter: 'outstanding', paperCourse: '', showDoneTasks: false, labFilter: 'active', q: '' };
 let modalRefresh = null;   // re-draws the open supervision/lab panel after a change
 
 /* ---------------- helpers ---------------- */
@@ -262,8 +262,10 @@ function migrate() {
   state.settings = { ...d.settings, ...state.settings };
   if (+state.settings.dayEnd === 19) state.settings.dayEnd = 20;   // old default cut off the 7pm slot
   for (const k of ['courses', 'events', 'papers', 'tasks']) if (!Array.isArray(state[k])) state[k] = d[k];
-  for (const k of ['labs', 'supNotes']) if (!state[k] || typeof state[k] !== 'object' || Array.isArray(state[k])) state[k] = {};
+  for (const k of ['labs', 'supNotes', 'lectures']) if (!state[k] || typeof state[k] !== 'object' || Array.isArray(state[k])) state[k] = {};
   for (const p of state.papers) ensureQuestions(p);
+  // lecture catch-up starts from the current week (change it in Settings)
+  if (!state.settings.lectureTrackFrom) state.settings.lectureTrackFrom = iso(windowStart(weekContaining(today())));
   for (const e of state.events) {
     if (e.link) continue;
     const m = (e.notes || '').match(/(?:Info:\s*)?(https?:\/\/\S+)/);
@@ -1040,6 +1042,10 @@ async function openDoc(d) {
     if (viewer !== me) return;
     layoutPages(me);
     pinchZoom(me);
+    if (d.page > 1) {
+      const box = $('.pdf-pages', el), pg = $(`.pdf-page[data-n="${d.page}"]`, box);
+      if (pg) box.scrollTop += pg.getBoundingClientRect().top - box.getBoundingClientRect().top - 8;
+    }
   } catch (err) {
     if (viewer !== me) return;
     $('.pdf-pages', el).innerHTML = `<div class="pdf-msg">Couldn't open this PDF: ${esc(err.message || String(err))}.<br>
@@ -1336,13 +1342,14 @@ function viewDashboard() {
       ${papers.length ? `<ul class="ev-list">${papers.map(p => {
         const c = course(p.courseId);
         return `<li class="static"><div class="ev-bar" style="background:${c.color}"></div>
-          <div class="ev-main"><div class="ev-title row" style="gap:8px">${paperLabel(p)}<span class="spacer"></span>${pdfBtn(p)}<button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></div>
+          <div class="ev-main"><div class="ev-title row" style="gap:8px">${paperLabel(p)}<span class="spacer"></span>${doneBtn(p)}${pdfBtn(p)}<button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></div>
           <div class="ev-meta">${esc(c.name)} · due ${fmtDue(p.due)} ${relDue(p.due)}</div>
           ${qStrip(p)}
           </div></li>`;
       }).join('')}</ul>` : '<div class="empty">All caught up 🎉</div>'}
     </section>
     ${dashLabs()}
+    ${catchUpPanel({ compact: true })}
     <section class="panel">
       <div class="section-head"><h2>Tasks</h2><span class="spacer"></span><a href="#tasks" class="small">Planner →</a></div>
       ${tasks.length ? tasks.map(taskRow).join('') : '<div class="empty">No open tasks.</div>'}
@@ -1484,7 +1491,7 @@ function viewSupervisions() {
       <div class="row"><span class="when">${fmtDate(o.d)}, ${esc(o.e.start)}</span><span class="spacer"></span><span class="muted small">Week ${termWeek(o.d)}</span></div>
       <div>${esc(o.e.title)}</div>
       <div class="muted small">${[c.name, o.e.location, o.e.who].filter(Boolean).map(esc).join(' · ')}</div>
-      ${linked.map(p => `<div class="sup-paper"><div class="small row" style="gap:6px"><span><strong>${paperLabel(p)}</strong> <span class="status-${p.status}">· ${STATUS[p.status]}</span></span><span class="spacer"></span>${pdfBtn(p)}<button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></div>${qStrip(p)}${flagList(p)}</div>`).join('')}
+      ${linked.map(p => `<div class="sup-paper"><div class="small row" style="gap:6px"><span><strong>${paperLabel(p)}</strong> <span class="status-${p.status}">· ${STATUS[p.status]}</span></span><span class="spacer"></span>${doneBtn(p)}${pdfBtn(p)}<button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></div>${qStrip(p)}${flagList(p)}</div>`).join('')}
       ${note ? `<div class="note-preview small">📝 ${esc(note.length > 90 ? note.slice(0, 90) + '…' : note)}</div>` : ''}
       ${tasks.length ? `<div class="small">${openT.length ? `☐ ${openT.length} open task${openT.length > 1 ? 's' : ''}` : '✓ tasks done'}</div>` : ''}
       <div class="card-hint small">Open for papers, notes &amp; tasks →</div>
@@ -1517,11 +1524,11 @@ function viewPapers() {
       <td>${qStrip(p)}${(() => { const n = linkedTasks('paper', p.id).filter(x => !x.done).length; return n ? `<div class="small muted">☐ ${n} task${n > 1 ? 's' : ''}</div>` : ''; })()}</td>
       <td><select data-action="paper-status" data-id="${p.id}" class="status-${p.status}">
         ${Object.entries(STATUS).map(([k, l]) => `<option value="${k}"${k === p.status ? ' selected' : ''}>${l}</option>`).join('')}</select></td>
-      <td>${pdfBtn(p)}<button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></td>
+      <td class="paper-acts">${doneBtn(p)}${pdfBtn(p)}<button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></td>
     </tr>`;
   }).join('');
 
-  return `
+  return `${workloadPanel()}
   <section class="panel">
     <div class="section-head"><h2>Examples papers</h2>
       <select data-action="paper-filter"><option value="outstanding"${ui.paperFilter === 'outstanding' ? ' selected' : ''}>Outstanding</option><option value="progress"${ui.paperFilter === 'progress' ? ' selected' : ''}>In progress</option><option value="all"${ui.paperFilter === 'all' ? ' selected' : ''}>All papers</option></select>
@@ -1665,6 +1672,7 @@ function viewSettings() {
           <option value="1"${+s.weekStartDay === 1 ? ' selected' : ''}>Monday</option></select></label>
         <label class="f">Day starts (hour)<input type="number" name="dayStart" min="0" max="23" value="${s.dayStart}"></label>
         <label class="f">Day ends (hour)<input type="number" name="dayEnd" min="1" max="24" value="${s.dayEnd}"></label>
+        <label class="f">Track lecture catch-up from<input type="date" name="lectureTrackFrom" value="${esc(s.lectureTrackFrom || '')}"></label>
       </div>
       <p class="muted small">Cambridge term weeks run Thursday–Wednesday. Michaelmas 2026 full term is Tue 6 Oct – Fri 4 Dec, so Week 1 starts Thu 8 Oct.</p>
     </section>
@@ -1781,6 +1789,7 @@ function viewLectures() {
   const active = groups.filter(x => x.next || x.docs.length);
   const later = groups.filter(x => !x.next && !x.docs.length);
   return `
+  ${catchUpPanel()}
   <div class="section-head"><h2>Lectures</h2><span class="spacer"></span>
     <span class="small muted">${libDocs('handout').length} handouts · tap one to open it</span></div>
   <div class="grid-cards">${active.map(card).join('')}</div>
@@ -1821,7 +1830,213 @@ document.addEventListener('keydown', e => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.doc-row')) { e.preventDefault(); e.target.click(); }
 });
 
-const VIEWS = { dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
+
+/* ---------------- lecture catch-up ---------------- */
+const lecReviewed = o => !!state.lectures[occKey(o)];
+/** Lectures that have finished (since the tracking date) and aren't ticked as reviewed. */
+function lectureBacklog() {
+  const t = today(), ts = iso(t), nm = nowMin();
+  const from = parseISO(state.settings.lectureTrackFrom || ts);
+  return occurrences(from, t).filter(o => o.e.type === 'lecture' && (o.date < ts || toMin(o.e.end) <= nm) && !lecReviewed(o));
+}
+function backlogGroups(list = lectureBacklog()) {
+  const m = new Map();
+  for (const o of list) { if (!m.has(o.e.title)) m.set(o.e.title, []); m.get(o.e.title).push(o); }
+  return [...m].map(([title, items]) => ({ title, items, courseId: items[0].e.courseId })).sort((a, b) => b.items.length - a.items.length || a.title.localeCompare(b.title));
+}
+function lecRow(o) {
+  return `<div class="lec-row"><span class="small"><strong>${fmtDate(o.d)}</strong> <span class="muted">${esc(o.e.start)}</span></span>
+    <span class="spacer"></span>
+    <button type="button" class="btn sm" data-action="lec-review" data-key="${esc(occKey(o))}" aria-label="Mark ${esc(o.e.title)} on ${fmtDate(o.d)} as caught up">✓ Caught up</button></div>`;
+}
+function catchUpPanel({ compact = false } = {}) {
+  const groups = backlogGroups();
+  const n = groups.reduce((a, g) => a + g.items.length, 0);
+  const since = fmtDate(parseISO(state.settings.lectureTrackFrom || iso(today())));
+  if (!n) return compact ? '' : `<section class="panel catchup ok"><strong>✓ All caught up on lectures</strong> <span class="small muted">since ${since} · tick lectures off here once you've reviewed them</span></section>`;
+  return `<section class="panel catchup">
+    <div class="section-head"><h2>Lectures to catch up on <span class="count-pill">${n}</span></h2><span class="spacer"></span>
+      ${compact ? '<a href="#lectures" class="small">Lectures →</a>' : `<span class="small muted">since ${since} · <a href="#settings">change</a></span>`}</div>
+    ${groups.map(g => `<div class="catchup-group" style="--c:${course(g.courseId).color}">
+      <div class="row"><strong>${esc(g.title)}</strong><span class="small muted">${g.items.length} to review</span><span class="spacer"></span>
+        ${g.items.length > 1 ? `<button type="button" class="btn sm" data-action="lec-review-all" data-title="${esc(g.title)}">✓ All caught up</button>` : ''}</div>
+      ${(compact ? g.items.slice(0, 3) : g.items).map(lecRow).join('')}
+      ${compact && g.items.length > 3 ? `<div class="small muted">+ ${g.items.length - 3} more</div>` : ''}
+    </div>`).join('')}
+  </section>`;
+}
+
+/* ---------------- examples papers: one-tap done & workload ---------------- */
+let toastTimer = 0;
+/** Small message at the bottom of the screen with an optional action button (e.g. Undo). */
+function toast(msg, actLabel, onAct) {
+  let t = $('#toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
+  t.innerHTML = `<span>${esc(msg)}</span>${actLabel ? `<button type="button" class="btn sm">${esc(actLabel)}</button>` : ''}`;
+  t.className = 'show';
+  if (actLabel) $('button', t).onclick = () => { t.className = ''; clearTimeout(toastTimer); onAct(); };
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = ''; }, 6000);
+}
+const isDone = p => p.status === 'done' || p.status === 'submitted';
+function setPaperDone(p, on) {
+  if (on) {
+    p.undoDone = { status: p.status, qs: p.questions.map(q => q.done) };
+    p.questions.forEach(q => { q.done = true; });
+    syncPaper(p); p.status = 'done';
+  } else {
+    const u = p.undoDone;
+    if (u) u.qs.forEach((d, i) => { if (p.questions[i]) p.questions[i].done = d; });
+    syncPaper(p);
+    p.status = u && u.status !== 'done' && u.status !== 'submitted' ? u.status : (p.done ? 'progress' : 'todo');
+    delete p.undoDone;
+  }
+}
+const doneBtn = p => isDone(p)
+  ? `<button type="button" class="btn sm done-btn on" data-action="paper-done" data-id="${p.id}" data-on="0" title="Tap to undo" aria-label="${paperLabel(p)} is done — undo">✓ Done</button>`
+  : `<button type="button" class="btn sm done-btn" data-action="paper-done" data-id="${p.id}" data-on="1" aria-label="Mark ${paperLabel(p)} done">✓ Mark done</button>`;
+
+/** Per course: questions done vs set on papers issued so far, and what's due next. */
+function workload() {
+  const t = iso(today()), soon = iso(addDays(today(), 3));
+  return state.courses.map(c => {
+    const ps = state.papers.filter(p => p.courseId === c.id && (!p.issued || p.issued <= t));
+    if (!ps.length) return null;
+    const total = ps.reduce((a, p) => a + (p.total || 0), 0);
+    const done = ps.reduce((a, p) => a + (isDone(p) ? p.total || 0 : p.done || 0), 0);
+    const open = ps.filter(p => !isDone(p) && p.due).sort(byDue);
+    const next = open[0] || null;
+    const left = p => p.total - p.done;
+    const overdue = open.filter(p => p.due.slice(0, 10) < t);
+    const tight = open.filter(p => p.due.slice(0, 10) >= t && p.due.slice(0, 10) <= soon && left(p) / (p.total || 1) > 0.5);
+    const state_ = overdue.length ? ['bad', `⚠ ${overdue.length} overdue`] : tight.length ? ['warn', '⚠ Behind'] : ['ok', '✓ On track'];
+    return { c, total, done, next, left: next ? left(next) : 0, st: state_ };
+  }).filter(Boolean);
+}
+function workloadPanel() {
+  const rows = workload();
+  if (!rows.length) return '';
+  return `<section class="panel workload">
+    <div class="section-head"><h2>Workload by course</h2><span class="small muted">questions done on papers issued so far · tap a course to filter</span></div>
+    ${rows.map(r => {
+      const pct = r.total ? Math.round(r.done / r.total * 100) : 0;
+      const nd = r.next ? dueParts(r.next.due) : null;
+      return `<button type="button" class="wl-row ${ui.paperCourse === r.c.id ? 'sel' : ''}" data-action="wl-course" data-id="${r.c.id}"
+          title="${esc(r.c.name)}: ${r.done} of ${r.total} questions done (${pct}%)${r.next ? `\nNext: ${esc(shortPaper(r.next))}, ${r.left} left, due ${fmtDate(nd.d)}` : ''}">
+        <span class="wl-name"><i class="dot" style="background:${r.c.color}"></i>${esc(r.c.name)}</span>
+        <span class="wl-bar" role="meter" aria-valuemin="0" aria-valuemax="${r.total}" aria-valuenow="${r.done}" aria-label="${esc(r.c.name)} questions done"><span style="width:${pct}%;background:${r.c.color}"></span></span>
+        <span class="wl-num small">${r.done}/${r.total}</span>
+        <span class="wl-next small muted">${r.next ? `Next: ${fmtDate(nd.d)} · ${r.left} left · ${esc(shortPaper(r.next))}` : 'Nothing due'}</span>
+        <span class="wl-st small ${r.st[0]}">${r.st[1]}</span>
+      </button>`;
+    }).join('')}
+  </section>`;
+}
+
+/* ---------------- search ---------------- */
+let searchIdx = null, searchIdxSha = null, searchIdxLoading = null;
+async function loadSearchIndex() {
+  const ref = state.searchIndex;
+  if (!ref || !ref.path) return null;
+  if (searchIdx && searchIdxSha === ref.sha) return searchIdx;
+  if (!searchIdxLoading) searchIdxLoading = pdfBytes(ref).then(buf => {
+    const j = JSON.parse(new TextDecoder().decode(buf));
+    for (const d of j.docs) d.lower = d.pages.map(fold);
+    searchIdx = j; searchIdxSha = ref.sha; return j;
+  }).finally(() => { searchIdxLoading = null; });
+  return searchIdxLoading;
+}
+/** Lower-case and drop accents, keeping the same length (so match positions line up): Thévenin -> thevenin */
+const fold = s => String(s ?? '').toLowerCase().replace(/[^\x00-\x7f]/g, c => c.normalize('NFD')[0]);
+/** Escape text and wrap every match of the search words in <mark>. */
+function hl(text, words) {
+  text = String(text ?? '');
+  const f = fold(text), on = new Uint8Array(text.length);
+  for (const w of words) for (let i = f.indexOf(w); i !== -1; i = f.indexOf(w, i + w.length)) on.fill(1, i, i + w.length);
+  let out = '', open = false;
+  for (let i = 0; i < text.length; i++) {
+    if (on[i] !== +open) { out += open ? '</mark>' : '<mark>'; open = !open; }
+    out += esc(text[i]);
+  }
+  return out + (open ? '</mark>' : '');
+}
+function snippet(text, lower, words, len = 160) {
+  const i = Math.max(0, lower.indexOf(words[0]));
+  const a = Math.max(0, i - 60);
+  const s = text.slice(a, a + len).replace(/\s+/g, ' ').trim();
+  return (a > 0 ? '…' : '') + s + (a + len < text.length ? '…' : '');
+}
+function searchResults(q) {
+  const words = fold(q).split(/\s+/).filter(Boolean);
+  if (!words.length) return '<div class="empty">Search papers, tasks, lectures, notes, handouts and data books — including the text inside the PDFs.</div>';
+  const has = txt => { const l = fold(txt); return words.every(w => l.includes(w)); };
+  const sec = (title, items) => items.length ? `<h3 class="sub">${title} <span class="muted">(${items.length})</span></h3><div class="search-list">${items.join('')}</div>` : '';
+  const item = (attrs, title, sub) => `<div class="search-item" ${attrs} role="button" tabindex="0"><div class="si-title">${title}</div>${sub ? `<div class="small muted">${sub}</div>` : ''}</div>`;
+
+  const papers = state.papers.filter(p => has([p.number, p.title, p.notes, course(p.courseId).name, ...(p.questions || []).map(x => x.note)].join(' ')))
+    .map(p => item(`data-paper="${p.id}"`, hl(`${p.number}${p.title ? ' — ' + p.title : ''}`, words), `${esc(course(p.courseId).name)} · ${STATUS[p.status] || ''}${p.due ? ' · due ' + fmtDate(dueParts(p.due).d) : ''}`));
+  const tasks = state.tasks.filter(t => has([t.title, t.notes].join(' ')))
+    .map(t => item(`data-task="${t.id}"`, (t.done ? '✓ ' : '☐ ') + hl(t.title, words), [t.due ? fmtDate(parseISO(t.due)) : t.rolling ? '🔁 spare time' : '', t.notes ? hl(t.notes.slice(0, 120), words) : ''].filter(Boolean).join(' · ')));
+  const events = state.events.filter(e => has([e.title, e.location, e.who, e.notes].join(' ')))
+    .map(e => item(`data-ev="${e.id}"`, hl(e.title, words), [TYPES[e.type], e.location, e.who].filter(Boolean).map(x => hl(x, words)).join(' · ')));
+  const notes = [
+    ...Object.entries(state.supNotes || {}).filter(([, n]) => has(n)).map(([k, n]) => { const o = findOcc(k); return o && item(`data-sup="${esc(k)}"`, `📝 ${esc(o.e.title)} — ${fmtDate(o.d)}`, hl(n.slice(0, 160), words)); }),
+    ...Object.entries(state.labs || {}).filter(([, r]) => r && has(r.notes)).map(([k, r]) => { const o = findOcc(k); return o && item(`data-lab="${esc(k)}"`, `🔬 ${esc(o.e.title)} — ${fmtDate(o.d)}`, hl(r.notes.slice(0, 160), words)); }),
+  ].filter(Boolean);
+  const docs = (state.library || []).filter(d => has([d.title, d.name, d.group].join(' ')))
+    .map(d => item(`data-action="view-doc" data-path="${esc(d.path)}"`, `${d.kind === 'databook' ? '📘' : '📄'} ${hl(d.title, words)}`, esc(d.kind === 'databook' ? 'Data book' : groupName(d.group))));
+
+  let inside = '';
+  if (searchIdx) {
+    const hits = [];
+    for (const d of searchIdx.docs) {
+      const lib = (state.library || []).find(x => x.path === d.path), paper = !lib && state.papers.find(x => x.pdf === d.path);
+      if (!lib && !paper) continue;
+      const pages = [];
+      d.lower.forEach((l, i) => { if (words.every(w => l.includes(w))) pages.push(i); });
+      if (!pages.length) continue;
+      const title = lib ? lib.title : `${paper.number} — ${paper.title}`;
+      const sub = lib ? (lib.kind === 'databook' ? 'Data book' : groupName(lib.group)) : course(paper.courseId).name;
+      hits.push({ n: pages.length, html: `<div class="search-doc"><div class="si-title">${lib && lib.kind === 'databook' ? '📘' : '📄'} ${esc(title)} <span class="small muted">· ${esc(sub)} · ${pages.length} page${pages.length > 1 ? 's' : ''}</span></div>
+        ${pages.slice(0, 4).map(i => `<div class="search-item page" data-action="view-doc-page" data-path="${esc(d.path)}" data-page="${i + 1}" data-q="${esc(q)}" role="button" tabindex="0">
+          <span class="pg">p. ${i + 1}</span><span class="small">${hl(snippet(d.pages[i], d.lower[i], words), words)}</span></div>`).join('')}
+        ${pages.length > 4 ? `<div class="small muted" style="padding-left:12px">+ ${pages.length - 4} more pages</div>` : ''}</div>` });
+    }
+    hits.sort((a, b) => b.n - a.n);
+    inside = hits.length ? `<h3 class="sub">Inside PDFs <span class="muted">(${hits.length})</span></h3>${hits.slice(0, 25).map(h => h.html).join('')}` : '';
+  } else if (state.searchIndex) inside = '<div class="small muted">Loading PDF text…</div>';
+  else inside = '<div class="small muted">PDF text isn’t indexed yet — run the IA Engineering sync on your Mac once.</div>';
+
+  const found = sec('Examples papers', papers) + sec('Tasks', tasks) + sec('Timetable', events) + sec('Notes', notes) + sec('Handouts &amp; data books', docs);
+  return (found || (inside.includes('search-doc') ? '' : '<div class="empty">No matches.</div>')) + inside;
+}
+function viewSearch() {
+  if (!searchIdx && state.searchIndex) loadSearchIndex().then(() => { if (currentTab() === 'search') updateSearch(); }).catch(() => {});
+  return `<section class="panel">
+    <div class="section-head"><h2>Search</h2></div>
+    <input type="search" id="searchBox" class="search-box" placeholder="e.g. Thevenin, Mohr's circle, EP3, supervisor's name…" value="${esc(ui.q)}" autocomplete="off" spellcheck="false" aria-label="Search">
+    <div id="searchResults" aria-live="polite">${searchResults(ui.q)}</div>
+  </section>`;
+}
+function updateSearch() { const r = $('#searchResults'); if (r) r.innerHTML = searchResults(ui.q); }
+let searchTimer = 0;
+document.addEventListener('input', e => {
+  if (e.target.id !== 'searchBox') return;
+  ui.q = e.target.value;
+  clearTimeout(searchTimer); searchTimer = setTimeout(updateSearch, 120);
+});
+document.addEventListener('keydown', e => {
+  // "/" or Cmd/Ctrl+K jumps to search
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+  if (viewer || !$('#modal').hidden) return;
+  if ((e.key === '/' && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) {
+    e.preventDefault();
+    if (currentTab() !== 'search') location.hash = 'search';
+    setTimeout(() => { const b = $('#searchBox'); if (b) { b.focus(); b.select(); } }, 30);
+  }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.search-item')) { e.preventDefault(); e.target.click(); }
+});
+
+const VIEWS = { search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
 const currentTab = () => { const h = location.hash.slice(1); return VIEWS[h] ? h : 'dashboard'; };
 
 function render() {
@@ -1833,6 +2048,7 @@ function render() {
   const keepScroll = $('.tt-wrap') ? $('.tt-wrap').scrollTop : null;
   $('#view').innerHTML = VIEWS[tab]();
   if (tab === 'timetable') fitTimetable(keepScroll);
+  if (tab === 'search') { const b = $('#searchBox'); if (b && !isNarrow()) { b.focus(); b.setSelectionRange(b.value.length, b.value.length); } }
 }
 
 /** Size the timetable to the window so the whole day (top and bottom) is reachable by scrolling inside it. */
@@ -1957,6 +2173,22 @@ document.addEventListener('click', e => {
         if (!d || !confirm(`Remove "${d.title}" from the planner?` + (d.src === 'folder' ? '\n\nIt will come back next time you sync unless you also delete it from your IA Engineering folder.' : ''))) return;
         state.library = state.library.filter(x => x !== d); save(); render(); deleteFile(d.path, d.sha);
       },
+      'view-doc-page': () => {
+        const path = actEl.dataset.path, page = +actEl.dataset.page;
+        const d = (state.library || []).find(x => x.path === path);
+        const p = !d && state.papers.find(x => x.pdf === path);
+        if (d) openDoc({ ...docRef(d), page }); else if (p) openDoc({ path: p.pdf, sha: p.pdfSha, title: [p.number, p.title].filter(Boolean).join(' — '), sub: course(p.courseId).name, fileName: p.pdfName, paperId: p.id, page });
+      },
+      'paper-done': () => {
+        const p = state.papers.find(x => x.id === actEl.dataset.id);
+        if (!p) return;
+        const on = actEl.dataset.on === '1';
+        setPaperDone(p, on); save(); render();
+        if (on) toast(`✓ ${shortPaper(p)} marked done`, 'Undo', () => { setPaperDone(p, false); save(); render(); });
+      },
+      'wl-course': () => { ui.paperCourse = ui.paperCourse === actEl.dataset.id ? '' : actEl.dataset.id; render(); },
+      'lec-review': () => { state.lectures[actEl.dataset.key] = true; save(); render(); },
+      'lec-review-all': () => { for (const o of lectureBacklog()) if (o.e.title === actEl.dataset.title) state.lectures[occKey(o)] = true; save(); render(); },
       'view-pdf': () => { const p = state.papers.find(x => x.id === actEl.dataset.id); if (p) openPdf(p); },
       'edit-paper': () => { const p = state.papers.find(x => x.id === actEl.dataset.id); if (p) openPaperForm(p); },
       'lab-pre': () => { applyLabPre(actEl); render(); },
@@ -2031,7 +2263,7 @@ document.addEventListener('change', e => {
   else if (act === 'lab-filter') { ui.labFilter = t.value; render(); }
   else if (t.closest('#termForm')) {
     const v = t.type === 'number' ? +t.value : t.value;
-    if (t.name === 'week1Start' && !t.value) return;
+    if ((t.name === 'week1Start' || t.name === 'lectureTrackFrom') && !t.value) return;
     state.settings[t.name] = v;
     if (t.name === 'week1Start' || t.name === 'weekStartDay') ui.week = null;
     save(); render();

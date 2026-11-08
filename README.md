@@ -43,3 +43,16 @@ They're viewed in the app with a bundled copy of [pdf.js](https://github.com/moz
   `python3 tools/sync_library.py` (`--dry-run` to preview). Only new or changed files are
   uploaded; files deleted from Data Books / Lecture Handouts are removed from the planner.
 - Or attach one in the app: ✎ Edit on a paper → 📎 Attach PDF.
+
+## Search
+
+The 🔍 Search tab (or press `/`) searches papers, tasks, the timetable, notes, handouts and
+data books, and the text inside every PDF. The PDF text is pulled out on your Mac with the
+built-in PDFKit when you sync (`tools/build_search.py`, run automatically by the sync) and
+stored as `search/index.json` in the **private** data repo. PDFs attached from the app itself
+are searchable after the next sync.
+
+## Emails
+
+The private data repo sends a daily digest at 6am UK time (`daily-digest.yml`) and a
+"week ahead" email on Sundays at 6pm (`weekly-digest.yml`), both from `digest.py`.

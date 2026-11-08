@@ -13,6 +13,8 @@ Syncs three things, uploading only new or changed files:
 Data books and handouts mirror the folder: delete or rename a file there and it
 is removed from the planner on the next sync. (Files you attached in the app
 itself are left alone.) Titles you rename in the app are kept.
+
+It also updates the search index of text inside every PDF (see build_search.py).
 """
 import re
 import sys
@@ -21,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from planner_data import DATA, load, save  # noqa: E402
 from sync_papers import git_blob_sha, sync_papers  # noqa: E402
+from build_search import build_index  # noqa: E402
 
 ROOT_DIR = Path.home() / "Documents" / "IA Engineering"
 REPO = DATA.parent
@@ -152,10 +155,13 @@ def main():
         print("  ", c)
     total += len(ch)
 
+    if not dry and build_index(data):   # text inside the PDFs, for the app's search
+        total += 1
+
     if dry:
         print("(dry run — nothing uploaded)")
     elif total:
-        save(data, "Sync files from IA Engineering folder", extra=["papers", "library"])
+        save(data, "Sync files from IA Engineering folder", extra=["papers", "library", "search"])
     else:
         print("Everything already up to date.")
 

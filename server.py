@@ -43,7 +43,8 @@ class Handler(SimpleHTTPRequestHandler):
             rel = parse_qs(urlsplit(self.path).query).get("path", [""])[0]
             f = (DATA_DIR / rel).resolve()
             allowed = [(DATA_DIR / d).resolve() for d in ("papers", "library")]
-            if not (f.suffix == ".pdf" and f.is_file() and any(f.is_relative_to(a) for a in allowed)):
+            is_index = f == (DATA_DIR / "search" / "index.json").resolve()
+            if not f.is_file() or not (is_index or (f.suffix == ".pdf" and any(f.is_relative_to(a) for a in allowed))):
                 return self._send_json(404, b'{"error":"not found"}')
             body = f.read_bytes()
             self.send_response(200)
