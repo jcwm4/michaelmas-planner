@@ -56,3 +56,17 @@ are searchable after the next sync.
 
 The private data repo sends a daily digest at 6am UK time (`daily-digest.yml`) and a
 "week ahead" email on Sundays at 6pm (`weekly-digest.yml`), both from `digest.py`.
+
+## Phone notifications
+
+Settings → Notifications → **Turn on** (on iPhone, add the planner to your Home Screen first).
+Each device's push subscription is saved in the private data repo; `notify.yml` there sends a
+07:30 "today" and a 19:00 "tomorrow" reminder via `notify.py`. It needs the repo secret
+`VAPID_PRIVATE_KEY` (the matching public key is `VAPID_PUBLIC` in `public/app.js`).
+
+## Automatic sync
+
+`zsh tools/install_auto_sync.sh` installs a per-user launchd agent that runs
+`tools/auto_sync.sh` whenever `~/Documents/IA Engineering` changes (and every 15 minutes).
+It only syncs when a PDF was added, changed or removed, and shows a Mac notification.
+`zsh tools/install_auto_sync.sh --remove` turns it off. Log: `~/Library/Logs/Michaelmas Planner sync.log`.

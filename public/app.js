@@ -1684,6 +1684,10 @@ function viewSettings() {
         <button class="btn sm danger" data-action="del-course" data-id="${c.id}">✕</button></div>`).join('')}</div>
     </section>
     <section class="panel">
+      <h2>Notifications</h2>
+      <div id="pushBox"><p class="small muted">Checking…</p></div>
+    </section>
+    <section class="panel">
       <h2>Data</h2>
       <p class="muted small">${backend === 'github'
         ? `Saved automatically to your <strong>private</strong> repo <code>${esc(gh.owner)}/${esc(gh.repo)}</code> (every save is kept in its history). A copy is kept on this device for offline use.`
@@ -2036,6 +2040,87 @@ document.addEventListener('keydown', e => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.search-item')) { e.preventDefault(); e.target.click(); }
 });
 
+
+/* ---------------- phone notifications (Web Push) ----------------
+   This device subscribes with the browser's push service; the subscription is saved in the
+   private data repo, and a scheduled GitHub Action there sends the reminders (notify.py).
+   On iPhone this only works once the app is added to the Home Screen (iOS 16.4+). */
+const VAPID_PUBLIC = 'BAxsOpdjkB3BMo68NopW540Zn6mv3fborxnPAp545CSHn4Gx2FKKYNkcjCIKHMUhHfLN9HrL-h9dc6eOqTXEDtA';
+let swReg = null;
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').then(r => { swReg = r; }).catch(() => {});
+  navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'open' && VIEWS[e.data.hash]) location.hash = e.data.hash; });
+}
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const deviceName = () => isIOS() ? (/iPad/.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && !/iPhone/.test(navigator.userAgent) ? 'iPad' : 'iPhone') : /Mac/.test(navigator.platform) ? 'Mac' : /Android/.test(navigator.userAgent) ? 'Android' : 'Computer';
+const b64uToBytes = s => { const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)); return Uint8Array.from(b, c => c.charCodeAt(0)); };
+async function currentSub() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+  const reg = swReg || await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+const mySub = sub => sub && (state.pushSubs || []).find(x => x.endpoint === sub.endpoint);
+async function enablePush() {
+  if (backend !== 'github') return alert('Notifications need the GitHub connection (not local mode).');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') return alert('Notifications are blocked for this app. Allow them in Settings → Notifications → Planner, then try again.');
+  const reg = swReg || await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(VAPID_PUBLIC) });
+  const j = sub.toJSON();
+  state.pushSubs = (state.pushSubs || []).filter(x => x.endpoint !== j.endpoint);
+  state.pushSubs.push({ id: uid(), device: deviceName(), endpoint: j.endpoint, keys: j.keys, added: iso(today()), morning: true, evening: true });
+  save(); fillPushBox();
+}
+async function disablePush() {
+  const sub = await currentSub();
+  if (sub) { state.pushSubs = (state.pushSubs || []).filter(x => x.endpoint !== sub.endpoint); await sub.unsubscribe().catch(() => {}); }
+  save(); fillPushBox();
+}
+async function fillPushBox() {
+  const box = $('#pushBox');
+  if (!box) return;
+  const others = sub => (state.pushSubs || []).filter(x => !sub || x.endpoint !== sub.endpoint);
+  const otherList = sub => others(sub).length ? `<div class="small muted" style="margin-top:10px">Also on: ${others(sub).map(x =>
+    `<span class="chip">${esc(x.device)} <button type="button" class="icon-btn" data-push-remove="${x.id}" aria-label="Stop notifications on ${esc(x.device)}" title="Stop notifications on that device">✕</button></span>`).join(' ')}</div>` : '';
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    box.innerHTML = isIOS() && !isStandalone()
+      ? `<p class="small">To get notifications on your iPhone, add the planner to your Home Screen first: tap <strong>Share</strong> <span aria-hidden="true">⎋</span> → <strong>Add to Home Screen</strong>, then open it from there and come back to Settings.</p>${otherList(null)}`
+      : `<p class="small muted">This browser can't receive notifications.</p>${otherList(null)}`;
+    return;
+  }
+  let sub = null;
+  try { sub = await currentSub(); } catch { /* ignore */ }
+  const me = mySub(sub);
+  if (!me) {
+    box.innerHTML = `<p class="small muted">Get reminders on this device: a morning heads-up (07:30) and an evening “tomorrow” reminder (19:00) for lab pre-work, papers due, supervisions and tasks.</p>
+      <button type="button" class="btn primary" data-push="on">🔔 Turn on notifications${isIOS() ? '' : ' on this device'}</button>${otherList(sub)}`;
+    return;
+  }
+  box.innerHTML = `<p class="small">🔔 Notifications are <strong>on</strong> for this ${esc(me.device)}.</p>
+    <label class="small row" style="gap:6px"><input type="checkbox" data-push-pref="morning" ${me.morning !== false ? 'checked' : ''}> Morning heads-up · 07:30</label>
+    <label class="small row" style="gap:6px"><input type="checkbox" data-push-pref="evening" ${me.evening !== false ? 'checked' : ''}> Evening “tomorrow” reminder · 19:00</label>
+    <div class="row" style="margin-top:10px"><button type="button" class="btn sm" data-push="test">Show a test notification</button><button type="button" class="btn sm danger" data-push="off">Turn off</button></div>${otherList(sub)}`;
+}
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-push], [data-push-remove]');
+  if (!b) return;
+  e.preventDefault();
+  try {
+    if (b.dataset.pushRemove) { state.pushSubs = (state.pushSubs || []).filter(x => x.id !== b.dataset.pushRemove); save(); return fillPushBox(); }
+    const a = b.dataset.push;
+    if (a === 'on') { b.disabled = true; await enablePush(); }
+    if (a === 'off') await disablePush();
+    if (a === 'test') (swReg || await navigator.serviceWorker.ready).showNotification('Planner', { body: 'Notifications are working 🎉', icon: 'icon-192.png', tag: 'test' });
+  } catch (err) { alert(`Couldn't change notifications: ${err.message}`); fillPushBox(); }
+});
+document.addEventListener('change', async e => {
+  const k = e.target.dataset && e.target.dataset.pushPref;
+  if (!k) return;
+  const me = mySub(await currentSub());
+  if (me) { me[k] = e.target.checked; save(); }
+});
+
 const VIEWS = { search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
 const currentTab = () => { const h = location.hash.slice(1); return VIEWS[h] ? h : 'dashboard'; };
 
@@ -2048,6 +2133,7 @@ function render() {
   const keepScroll = $('.tt-wrap') ? $('.tt-wrap').scrollTop : null;
   $('#view').innerHTML = VIEWS[tab]();
   if (tab === 'timetable') fitTimetable(keepScroll);
+  if (tab === 'settings') fillPushBox();
   if (tab === 'search') { const b = $('#searchBox'); if (b && !isNarrow()) { b.focus(); b.setSelectionRange(b.value.length, b.value.length); } }
 }
 
