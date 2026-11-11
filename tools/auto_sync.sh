@@ -9,6 +9,9 @@ STATE="$HOME/Library/Application Support/Michaelmas Planner"
 LOG="$HOME/Library/Logs/Michaelmas Planner sync.log"
 mkdir -p "$STATE"
 
+# once a day: fetch the live supervision sheet via Chrome and apply changes (does nothing most runs)
+/bin/zsh "$REPO/tools/check_supervisions.sh"
+
 fingerprint() {   # names, sizes and modified times of every PDF
   find "$ROOT" -iname '*.pdf' -type f -print0 2>/dev/null | xargs -0 stat -f '%N|%z|%m' 2>/dev/null | sort | shasum | cut -c1-40
 }
