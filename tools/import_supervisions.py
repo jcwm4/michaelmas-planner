@@ -102,6 +102,7 @@ def main():
     ap.add_argument("xlsx")
     ap.add_argument("--group", type=int, default=2)
     ap.add_argument("--part", default="1A")
+    ap.add_argument("--dry-run", action="store_true", help="show what would change, save nothing")
     args = ap.parse_args()
 
     rows = read_sheet(args.xlsx)
@@ -155,6 +156,9 @@ def main():
                 + f"Supervision group {args.group}: {members}", "source": SOURCE, "code": code,
             })
     sup_events.sort(key=lambda e: (e["date"], e["start"]))
+    old_sups = {e["id"]: e for e in data["events"] if e.get("source") == SOURCE}
+    old_extras = {e["id"]: e for e in data["events"] if e.get("source") == EXTRA_SOURCE}
+    old_times = {f"{e['date']}T{e['start']}" for e in old_sups.values()}
     replace_source(data, SOURCE, sup_events)
 
     # Selwyn extras in the LABS rows (e.g. "SELWYN 1A TEST 1:30-4:30")
@@ -193,17 +197,21 @@ def main():
                 papers.append({"number": f"Examples Paper {v}", "title": course_name,
                                "issued": dates[c].isoformat(), "_course": course_for(title)})
 
-    existing = {p["id"] for p in data["papers"]}
+    existing = {p["id"]: p for p in data["papers"]}
     today = date.today().isoformat()
-    added = []
+    added, moved = [], []
     for code, papers in by_code.items():
         sups = [e for e in sup_events if e["code"] == code]
         for i, p in enumerate(papers):
             pid = f"paper-{code}-{p['number'].replace(' ', '')}-{p['title'][:12].replace(' ', '')}"
-            if pid in existing:
-                continue
             sup = sups[i] if i < len(sups) else None
             due = f"{sup['date']}T{sup['start']}" if sup else ""
+            if pid in existing:
+                old = existing[pid]
+                # due date was set from a supervision that has now moved -> follow it
+                if due and old.get("due") != due and old.get("due") in old_times:
+                    moved.append((old, old["due"], due)); old["due"] = due
+                continue
             past = bool(due) and due[:10] < today
             paper = {"id": pid, "courseId": p["_course"], "number": p["number"], "title": p["title"],
                      "issued": p["issued"], "due": due, "total": 10, "done": 0,
@@ -213,7 +221,11 @@ def main():
             data["papers"].append(paper)
             added.append(paper)
 
-    save(data)
+    report_changes(old_sups, sup_events, old_extras, extras, moved, added)
+    if args.dry_run:
+        print("\n(dry run: nothing saved)")
+        return
+    save(data, "Supervisions re-imported from the Selwyn sheet")
     print(f"Group {args.group} ({members})")
     print(f"Imported {len(sup_events)} supervisions, {len(extras)} extra events, {len(added)} new examples papers.\n")
     for e in sup_events:
@@ -221,6 +233,25 @@ def main():
     print()
     for p in added:
         print(f"  [{p['status']:<9}] {p['number']:<17} {p['title']:<45} due {p['due'] or '—'}")
+
+
+def report_changes(old_sups, new_sups, old_extras, new_extras, moved, added):
+    def line(e):
+        return f"{e['date']} {e['start']}-{e['end']}  {e['title']} ({e.get('who') or '—'}, {e.get('location') or 'TBC'})"
+    out = []
+    for old, new in ((old_sups, {e["id"]: e for e in new_sups}), (old_extras, {e["id"]: e for e in new_extras})):
+        for i in sorted(set(old) - set(new)):
+            out.append(f"  - removed  {line(old[i])}")
+        for i in sorted(set(new) - set(old)):
+            out.append(f"  + new      {line(new[i])}")
+        for i in sorted(set(old) & set(new)):
+            diff = [k for k in ("start", "end", "location", "who", "title") if old[i].get(k) != new[i].get(k)]
+            if diff:
+                out.append(f"  ~ changed  {line(old[i])}\n          ->  {line(new[i])}")
+    for p, a, b in moved:
+        out.append(f"  ~ due date {p['number']} ({p['title']}): {a.replace('T', ' ')} -> {b.replace('T', ' ')}")
+    print("CHANGES vs your planner:")
+    print("\n".join(out) if out or added else "  none: your planner already matches the sheet")
 
 
 if __name__ == "__main__":
