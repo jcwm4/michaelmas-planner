@@ -158,7 +158,9 @@ def main():
     sup_events.sort(key=lambda e: (e["date"], e["start"]))
     old_sups = {e["id"]: e for e in data["events"] if e.get("source") == SOURCE}
     old_extras = {e["id"]: e for e in data["events"] if e.get("source") == EXTRA_SOURCE}
-    old_times = {f"{e['date']}T{e['start']}" for e in old_sups.values()}
+    old_by_code = {}
+    for e in sorted(old_sups.values(), key=lambda e: (e["date"], e["start"])):
+        old_by_code.setdefault(e.get("code"), []).append(f"{e['date']}T{e['start']}")
     replace_source(data, SOURCE, sup_events)
 
     # Selwyn extras in the LABS rows (e.g. "SELWYN 1A TEST 1:30-4:30")
@@ -208,8 +210,11 @@ def main():
             due = f"{sup['date']}T{sup['start']}" if sup else ""
             if pid in existing:
                 old = existing[pid]
-                # due date was set from a supervision that has now moved -> follow it
-                if due and old.get("due") != due and old.get("due") in old_times:
+                # follow a moved supervision only if the due date is still the one this script set
+                # (i.e. it matches the same supervision slot on the old sheet); manual changes are kept
+                prev = old_by_code.get(code, [])
+                was_auto = i < len(prev) and old.get("due") == prev[i]
+                if due and old.get("due") != due and was_auto and not old.get("dueManual"):
                     moved.append((old, old["due"], due)); old["due"] = due
                 continue
             past = bool(due) and due[:10] < today
