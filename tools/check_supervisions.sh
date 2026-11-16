@@ -1,9 +1,10 @@
 #!/bin/zsh
-# Once a day, fetch the live Selwyn supervision sheet through your logged-in Chrome (SharePoint
+# Once a day, fetch the live Selwyn supervision sheet through your default browser (SharePoint
 # needs your Cambridge login, which only the browser has), compare it with the planner and apply
 # any changes. Called from auto_sync.sh, which the Planner Sync helper runs every 15 minutes.
 #
-# - Only after 07:00, only while Chrome is already open, at most one try an hour.
+# - Only after 07:00, at most one try an hour. Uses your default browser (opened in the background
+#   if it isn't running), which must be logged in to your Cambridge Microsoft account.
 # - Small changes are applied and shown as a Mac notification; big ones (lots of supervisions
 #   disappearing, e.g. the sheet's layout changed) are NOT applied - you get a notification instead.
 # - The sheet link lives in your private data repo (data/sources.json).
@@ -19,7 +20,6 @@ log() { echo "$(date '+%F %T') supervisions: $*" >> "$LOG"; }
 
 [ "$(cat "$STATE/sup-checked" 2>/dev/null)" = "$today" ] && exit 0      # done today
 [ "$(date +%H)" -lt 7 ] && exit 0
-pgrep -xq "Google Chrome" || exit 0                                       # don't launch Chrome
 last=$(cat "$STATE/sup-attempt" 2>/dev/null || echo 0)
 [ $(( $(date +%s) - last )) -lt 3600 ] && exit 0                          # one try an hour
 date +%s > "$STATE/sup-attempt"
@@ -28,19 +28,20 @@ url=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['supervisi
 [ -n "$url" ] || { log "no sheet link in data/sources.json"; exit 0; }
 
 touch "$STATE/sup-marker"
-open -g -a "Google Chrome" "$url?download=1"
+open -g "$url?download=1"                                                 # default browser, in the background
 file=""
 for i in {1..30}; do
   sleep 2
-  file=$(find "$DL" -maxdepth 1 -name 'Michaelmas_Supervisions*.xlsx' -newer "$STATE/sup-marker" 2>/dev/null | head -1)
-  [ -n "$file" ] && ! ls "$DL"/*.crdownload >/dev/null 2>&1 && break
+  file=$(find "$DL" -maxdepth 1 -name 'Michaelmas_Supervisions*.xlsx' -newer "$STATE/sup-marker" -size +1k 2>/dev/null | head -1)
+  # wait for the download to finish (Chrome: .crdownload, Firefox: .part, Safari: .download)
+  [ -n "$file" ] && ! ls -d "$DL"/*.crdownload "$DL"/*.part "$DL"/*.download >/dev/null 2>&1 && break
   file=""
 done
 
 if [ -z "$file" ]; then
   fails=$(( $(grep -c "^$today" "$STATE/sup-fails" 2>/dev/null) + 1 )); echo "$today" >> "$STATE/sup-fails"
-  log "couldn't download the sheet (try $fails today) - logged out of SharePoint in Chrome, or no access to Downloads?"
-  [ "$fails" -eq 3 ] && notify "Supervision check" "Couldn't open the supervision sheet. Log in to SharePoint in Chrome."
+  log "couldn't download the sheet (try $fails today) - logged out of SharePoint in the browser, or no access to Downloads?"
+  [ "$fails" -eq 3 ] && notify "Supervision check" "Couldn't open the supervision sheet. Log in to SharePoint in your browser."
   exit 0
 fi
 
