@@ -1916,7 +1916,8 @@ function openLecNote(note, key) {
 function catchUpPanel({ compact = false } = {}) {
   const groups = backlogGroups();
   const nLec = groups.reduce((a, g) => a + g.items.length, 0);
-  const nNotes = openLecNotes().length;
+  // notes on a lecture that's still listed are part of that lecture; only count notes standing on their own
+  const nNotes = groups.reduce((a, g) => a + g.notes.length, 0);
   const since = fmtDate(parseISO(state.settings.lectureTrackFrom || iso(today())));
   const addBtn = `<button type="button" class="btn sm" data-action="lec-note" title="Note something specific to review from any lecture">📝 Add review note</button>`;
   if (!nLec && !nNotes) return compact ? '' : `<section class="panel catchup ok"><strong>✓ All caught up on lectures</strong> <span class="small muted">since ${since} · tick lectures off here once you've reviewed them</span><span class="spacer"></span>${addBtn}</section>`;
@@ -2654,7 +2655,7 @@ function updateBadges() {
   try {
     set('papers', state.papers.filter(p => !isDone(p) && p.due && p.due.slice(0, 10) <= soon).length, 'papers due in the next 3 days');
     set('labs', allLabs().filter(l => l.cls === 'todo' || l.preDue).length, 'labs needing attention');
-    set('lectures', lectureBacklog().length, 'lectures to catch up on');
+    set('lectures', backlogGroups().reduce((a, g) => a + g.items.length + g.notes.length, 0), 'lectures (and review notes) to catch up on');
   } catch { /* never let badges break the page */ }
 }
 
