@@ -77,6 +77,13 @@ It only syncs when a PDF was added, changed or removed, and shows a Mac notifica
 fallback), and each device saves every PDF plus the search index in its cache (Settings → Offline).
 Edits made offline are kept on the device and upload when you're back online.
 
+## Lecture catch-up and review notes
+
+The Lectures page (and the dashboard) lists lectures since the tracking date that you haven't
+ticked as caught up. Tap **📝** on a lecture, or **Add review note**, to note something specific to
+go over, such as "displacement diagrams" or one derivation. A note stays on the list after you tick
+its lecture off, until you tick the note itself. Open notes also appear in the daily and weekly emails.
+
 ## Terms and the vacation plan
 
 Settings → Terms → **Start a new term** archives the current term (read-only, viewable from

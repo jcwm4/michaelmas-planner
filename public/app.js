@@ -264,6 +264,7 @@ function migrate() {
   if (+state.settings.dayEnd === 19) state.settings.dayEnd = 20;   // old default cut off the 7pm slot
   for (const k of ['courses', 'events', 'papers', 'tasks']) if (!Array.isArray(state[k])) state[k] = d[k];
   for (const k of ['labs', 'supNotes', 'lectures', 'pastPapers']) if (!state[k] || typeof state[k] !== 'object' || Array.isArray(state[k])) state[k] = {};
+  if (!Array.isArray(state.lecNotes)) state.lecNotes = [];   // things to review from specific lectures
   for (const p of state.papers) ensureQuestions(p);
   // lecture catch-up starts from the current week (change it in Settings)
   if (!state.settings.lectureTrackFrom) state.settings.lectureTrackFrom = iso(windowStart(weekContaining(today())));
@@ -1853,30 +1854,87 @@ function lectureBacklog() {
     e: { id: c.key.split('|')[0], title: c.title, start: c.start, end: '', courseId: c.courseId, type: 'lecture' }, date: c.date, d: parseISO(c.date), carried: true }));
   return [...carried, ...occurrences(from, t).filter(o => o.e.type === 'lecture' && (o.date < ts || toMin(o.e.end) <= nm) && !lecReviewed(o))];
 }
+const openLecNotes = () => (state.lecNotes || []).filter(n => !n.done);
 function backlogGroups(list = lectureBacklog()) {
   const m = new Map();
-  for (const o of list) { if (!m.has(o.e.title)) m.set(o.e.title, []); m.get(o.e.title).push(o); }
-  return [...m].map(([title, items]) => ({ title, items, courseId: items[0].e.courseId })).sort((a, b) => b.items.length - a.items.length || a.title.localeCompare(b.title));
+  const grp = (title, courseId) => { if (!m.has(title)) m.set(title, { title, courseId, items: [], notes: [] }); return m.get(title); };
+  for (const o of list) grp(o.e.title, o.e.courseId).items.push(o);
+  const keys = new Set(list.map(occKey));
+  // notes whose lecture is still in the list show under that lecture; the rest (lecture already ticked off) on their own
+  for (const n of openLecNotes()) if (!keys.has(n.key)) grp(n.title, n.courseId).notes.push(n);
+  for (const g of m.values()) g.notes.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const size = g => g.items.length + g.notes.length;
+  return [...m.values()].sort((a, b) => size(b) - size(a) || a.title.localeCompare(b.title));
+}
+function lecNoteRow(n, showDate) {
+  return `<div class="lec-note"><button type="button" class="note-tick" data-action="lec-note-done" data-id="${esc(n.id)}" aria-label="Mark “${esc(n.text)}” as reviewed" title="Reviewed">✓</button>
+    <button type="button" class="note-text" data-action="lec-note-edit" data-id="${esc(n.id)}" title="Edit note">📝 ${esc(n.text)}${showDate && n.date ? ` <span class="small muted">· lecture ${fmtDate(parseISO(n.date))}</span>` : ''}</button></div>`;
 }
 function lecRow(o) {
+  const k = occKey(o);
+  const notes = openLecNotes().filter(n => n.key === k);
   return `<div class="lec-row"><span class="small"><strong>${fmtDate(o.d)}</strong> <span class="muted">${esc(o.e.start)}</span></span>
     <span class="spacer"></span>
-    <button type="button" class="btn sm" data-action="lec-review" data-key="${esc(occKey(o))}" aria-label="Mark ${esc(o.e.title)} on ${fmtDate(o.d)} as caught up">✓ Caught up</button></div>`;
+    <button type="button" class="btn sm" data-action="lec-note" data-key="${esc(k)}" aria-label="Add something to review from ${esc(o.e.title)} on ${fmtDate(o.d)}" title="Add something to review">📝</button>
+    <button type="button" class="btn sm" data-action="lec-review" data-key="${esc(k)}" aria-label="Mark ${esc(o.e.title)} on ${fmtDate(o.d)} as caught up">✓ Caught up</button></div>
+    ${notes.map(n => lecNoteRow(n, false)).join('')}`;
+}
+/** Past lectures this term (newest first), for the "which lecture?" picker. */
+function pastLectures() {
+  const t = today(), ts = iso(t), nm = nowMin();
+  const from = addDays(parseISO(state.settings.week1Start || ts), -7);
+  const occ = occurrences(from, t).filter(o => o.e.type === 'lecture' && (o.date < ts || toMin(o.e.start) <= nm));
+  const carried = (state.lectureCarry || []).map(c => ({ e: { id: c.key.split('|')[0], title: c.title, start: c.start, courseId: c.courseId }, date: c.date, d: parseISO(c.date) }));
+  const seen = new Set();
+  return [...occ, ...carried].filter(o => !seen.has(occKey(o)) && seen.add(occKey(o)))
+    .sort((a, b) => b.date.localeCompare(a.date) || b.e.start.localeCompare(a.e.start));
+}
+function openLecNote(note, key) {
+  const lecs = pastLectures();
+  const byKey = new Map(lecs.map(o => [occKey(o), o]));
+  if (note && note.key && !byKey.has(note.key)) byKey.set(note.key, null);
+  const label = o => `${o.e.title} — ${fmtDate(o.d)} ${o.e.start}`;
+  const options = [...byKey].map(([k, o]) => [k, o ? label(o) : `${note.title} — ${note.date ? fmtDate(parseISO(note.date)) : 'earlier'}`]);
+  if (!options.length) return toast('No lectures yet this term to add a note to');
+  openForm({
+    title: note ? 'Edit review note' : 'Something to review',
+    values: { text: note ? note.text : '', key: note ? note.key : (key || options[0][0]) },
+    fields: [
+      { key: 'text', label: 'What do you need to review?', required: true, full: true, placeholder: 'e.g. displacement diagrams, or the derivation of the bending equation' },
+      { key: 'key', label: 'From which lecture?', type: 'select', full: true, options },
+    ],
+    onSave: v => {
+      if (!v.text) return 'Write what you need to review.';
+      const o = byKey.get(v.key);
+      const info = o ? { key: v.key, title: o.e.title, courseId: o.e.courseId, date: o.date } : {};
+      if (note) Object.assign(note, { text: v.text }, info);
+      else state.lecNotes.push({ id: uid(), text: v.text, done: false, added: iso(today()), ...info });
+    },
+    onDelete: note ? () => { state.lecNotes = state.lecNotes.filter(n => n !== note); } : null,
+  });
 }
 function catchUpPanel({ compact = false } = {}) {
   const groups = backlogGroups();
-  const n = groups.reduce((a, g) => a + g.items.length, 0);
+  const nLec = groups.reduce((a, g) => a + g.items.length, 0);
+  const nNotes = openLecNotes().length;
   const since = fmtDate(parseISO(state.settings.lectureTrackFrom || iso(today())));
-  if (!n) return compact ? '' : `<section class="panel catchup ok"><strong>✓ All caught up on lectures</strong> <span class="small muted">since ${since} · tick lectures off here once you've reviewed them</span></section>`;
+  const addBtn = `<button type="button" class="btn sm" data-action="lec-note" title="Note something specific to review from any lecture">📝 Add review note</button>`;
+  if (!nLec && !nNotes) return compact ? '' : `<section class="panel catchup ok"><strong>✓ All caught up on lectures</strong> <span class="small muted">since ${since} · tick lectures off here once you've reviewed them</span><span class="spacer"></span>${addBtn}</section>`;
+  const what = [nLec ? `${nLec} lecture${nLec === 1 ? '' : 's'}` : '', nNotes ? `${nNotes} note${nNotes === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
   return `<section class="panel catchup">
-    <div class="section-head"><h2>Lectures to catch up on <span class="count-pill">${n}</span></h2><span class="spacer"></span>
-      ${compact ? '<a href="#lectures" class="small">Lectures →</a>' : `<span class="small muted">since ${since} · <a href="#settings">change</a></span>`}</div>
-    ${groups.map(g => `<div class="catchup-group" style="--c:${course(g.courseId).color}">
-      <div class="row"><strong>${esc(g.title)}</strong><span class="small muted">${g.items.length} to review</span><span class="spacer"></span>
+    <div class="section-head"><h2>Lectures to catch up on <span class="count-pill" title="${what}">${nLec + nNotes}</span></h2><span class="spacer"></span>
+      ${compact ? '<a href="#lectures" class="small">Lectures →</a>' : `<span class="small muted">since ${since} · <a href="#settings">change</a></span>${addBtn}`}</div>
+    ${groups.map(g => {
+      const items = compact ? g.items.slice(0, 3) : g.items;
+      const counts = [g.items.length ? `${g.items.length} lecture${g.items.length === 1 ? '' : 's'}` : '', g.notes.length ? `${g.notes.length} note${g.notes.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+      return `<div class="catchup-group" style="--c:${course(g.courseId).color}">
+      <div class="row"><strong>${esc(g.title)}</strong><span class="small muted">${counts} to review</span><span class="spacer"></span>
         ${g.items.length > 1 ? `<button type="button" class="btn sm" data-action="lec-review-all" data-title="${esc(g.title)}">✓ All caught up</button>` : ''}</div>
-      ${(compact ? g.items.slice(0, 3) : g.items).map(lecRow).join('')}
-      ${compact && g.items.length > 3 ? `<div class="small muted">+ ${g.items.length - 3} more</div>` : ''}
-    </div>`).join('')}
+      ${items.map(lecRow).join('')}
+      ${compact && g.items.length > 3 ? `<div class="small muted">+ ${g.items.length - 3} more lectures</div>` : ''}
+      ${g.notes.length ? `<div class="lec-notes-loose">${g.notes.map(n => lecNoteRow(n, true)).join('')}</div>` : ''}
+    </div>`;
+    }).join('')}
   </section>`;
 }
 
@@ -2737,6 +2795,13 @@ document.addEventListener('click', e => {
       },
       'wl-course': () => { ui.paperCourse = ui.paperCourse === actEl.dataset.id ? '' : actEl.dataset.id; render(); },
       'lec-review': () => { state.lectures[actEl.dataset.key] = true; save(); render(); },
+      'lec-note': () => openLecNote(null, actEl.dataset.key),
+      'lec-note-edit': () => { const n = state.lecNotes.find(x => x.id === actEl.dataset.id); if (n) openLecNote(n); },
+      'lec-note-done': () => {
+        const n = state.lecNotes.find(x => x.id === actEl.dataset.id); if (!n) return;
+        n.done = true; n.doneOn = iso(today()); save(); render();
+        toast('✓ Reviewed', 'Undo', () => { n.done = false; delete n.doneOn; save(); render(); });
+      },
       'pp-open': () => openCC(actEl.dataset.id),
       'new-term': () => openRollover(),
       'view-archive': () => viewArchive(+actEl.dataset.i),

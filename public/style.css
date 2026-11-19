@@ -847,3 +847,13 @@ body.hdr-hidden .topbar { transform: translateY(calc(-100% - 4px)); }
 .ok-text { color: var(--ok); }
 .warn-text { color: var(--warn); margin-top: 6px; }
 @media (max-width: 720px) { .vac-weeks { grid-template-columns: 1fr; } }
+
+/* review notes on lectures to catch up on */
+.lec-note { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0 4px 6px; }
+.lec-row + .lec-note, .lec-note + .lec-note { border-top: 0; }
+.lec-notes-loose { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 2px; }
+.lec-note .note-tick { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--c, var(--line)); background: var(--panel); color: var(--c, inherit); font-size: 13px; line-height: 1; cursor: pointer; }
+.lec-note .note-tick:hover, .lec-note .note-tick:focus-visible { background: var(--c); color: #fff; }
+.lec-note .note-text { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 3px 0; font: inherit; color: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.lec-note .note-text:hover { text-decoration: underline; text-decoration-color: var(--line); }
+.catchup .section-head .btn { margin-left: 8px; }
