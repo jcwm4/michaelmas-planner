@@ -857,3 +857,17 @@ body.hdr-hidden .topbar { transform: translateY(calc(-100% - 4px)); }
 .lec-note .note-text { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 3px 0; font: inherit; color: inherit; cursor: pointer; overflow-wrap: anywhere; }
 .lec-note .note-text:hover { text-decoration: underline; text-decoration-color: var(--line); }
 .catchup .section-head .btn { margin-left: 8px; }
+
+/* ---------- flagged questions page ---------- */
+.flag-course { border-left: 4px solid var(--c); }
+.flag-paper { padding: 8px 0; border-top: 1px solid var(--line); }
+.flag-paper:first-of-type { border-top: 0; }
+.flag-q { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 4px 0 4px 8px; }
+.flag-q-n { min-width: 70px; justify-content: flex-start; }
+.flag-q-note { flex: 1 1 200px; font-size: 14px; }
+@media print {
+  .sidebar, .topbar, header, #scrim, .no-print, #toast, .archive-bar { display: none !important; }
+  body, .panel { background: #fff !important; color: #000 !important; box-shadow: none !important; }
+  .flag-course { break-inside: avoid; }
+  .layout, main { display: block !important; margin: 0 !important; padding: 0 !important; }
+}

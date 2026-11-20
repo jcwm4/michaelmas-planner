@@ -84,6 +84,12 @@ ticked as caught up. Tap **📝** on a lecture, or **Add review note**, to note 
 go over, such as "displacement diagrams" or one derivation. A note stays on the list after you tick
 its lecture off, until you tick the note itself. Open notes also appear in the daily and weekly emails.
 
+## Flagged questions
+
+The **⚑ Flagged** page lists every examples-paper question you've flagged (this term and archived
+terms), grouped by course and paper, with your note and the page it's on. Tap a question to open the
+PDF at that page; ✎ adds a note, **✓ Sorted** unflags it. 🖨 prints or saves the list as a PDF.
+
 ## Terms and the vacation plan
 
 Settings → Terms → **Start a new term** archives the current term (read-only, viewable from

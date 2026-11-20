@@ -2287,6 +2287,78 @@ function openCC(id) {
   el.addEventListener('change', e => { if (e.target.dataset.cc === 'status') setPP(id, { status: e.target.value }); });
   $('[data-cc="close"]', el).focus();
 }
+/* ---------------- flagged questions (a revision list) ----------------
+   Every ⚑ flagged examples-paper question, this term and archived terms, grouped by course,
+   with the page it's on (found from the PDF text in the search index) so it opens right there. */
+function questionPage(paper, n) {
+  const d = searchIdx && paper.pdf && searchIdx.docs.find(x => x.path === paper.pdf);
+  if (!d || !d.pages.length) return 0;
+  let pg = 0;   // walk the numbers in order; a question is never more than a page after the last one
+  for (let k = 1; k <= n; k++) {
+    const pats = [new RegExp(`(?:^|\\s)${k}\\.\\s+(?=[A-Z(])`), new RegExp(`(?:^|\\s)${k}\\s+(?=[A-Z][a-z])`)];
+    for (let i = pg; i < Math.min(pg + 2, d.pages.length); i++) if (pats.some(r => r.test(d.pages[i]))) { pg = i; break; }
+  }
+  return pg + 1;
+}
+function flaggedAll() {
+  const live = liveState || state;
+  const terms = [{ term: '', data: live }, ...(live.archive || []).map((a, t) => ({ term: a.name, t, data: a.data })).reverse()];
+  const out = [];
+  for (const { term, t, data } of terms) for (const p of data.papers || []) {
+    const qs = flagged(p);
+    if (qs.length) out.push({ p, qs, term, t, courses: data.courses || [] });
+  }
+  return out;
+}
+const flaggedCount = () => flaggedAll().reduce((a, x) => a + x.qs.length, 0);
+function viewFlagged() {
+  const all = flaggedAll();
+  if (state.searchIndex && !searchIdx) loadSearchIndex().then(() => { if (currentTab() === 'flagged') render(); }).catch(() => {});
+  const n = all.reduce((a, x) => a + x.qs.length, 0);
+  const head = `<section class="panel"><div class="section-head"><h2>⚑ Flagged questions</h2><span class="pill">${n}</span><span class="spacer"></span>
+      ${n ? '<button type="button" class="btn sm no-print" data-action="flag-print">🖨 Print / save as PDF</button>' : ''}</div>
+    <p class="small muted" style="margin:0">Every question you've flagged, kept here for revision. Tap a question to open the paper at that page.
+      Flag a question by right-clicking, ⌥-clicking or pressing-and-holding its number on any examples paper.</p></section>`;
+  if (!n) return head + '<section class="panel"><div class="empty">No flagged questions yet.</div></section>';
+  const groups = new Map();
+  for (const x of all) {
+    const key = `${x.term}|${x.p.courseId}`;
+    if (!groups.has(key)) {
+      const c = x.courses.find(c => c.id === x.p.courseId) || course(x.p.courseId);
+      groups.set(key, { term: x.term, c, rank: x.courses.indexOf(c), items: [] });
+    }
+    groups.get(key).items.push(x);
+  }
+  const editable = x => !x.term && !liveState;
+  const qRow = (x, q) => {
+    const pg = questionPage(x.p, q.n);
+    const ids = `data-id="${x.p.id}" data-i="${q.n - 1}" data-t="${x.term ? x.t : ''}"`;
+    return `<div class="flag-q">
+      <button type="button" class="btn sm flag-q-n" data-action="flag-open" ${ids} data-page="${pg}" ${x.p.pdf ? '' : 'disabled'}
+        title="${x.p.pdf ? `Open ${paperLabel(x.p)}${pg ? ' at page ' + pg : ''}` : 'No PDF attached to this paper'}">Q${q.n}${pg ? ` <span class="muted">p.${pg}</span>` : ''}</button>
+      <span class="flag-q-note">${q.note ? esc(q.note) : '<span class="muted">No note</span>'}</span>
+      <span class="small ${q.done ? 'status-done' : 'muted'}">${q.done ? '✓ attempted' : 'not done yet'}</span>
+      ${editable(x) ? `<span class="no-print"><button type="button" class="btn sm" data-action="flag-note" ${ids} title="What was tricky?">✎</button>
+        <button type="button" class="btn sm" data-action="flag-clear" ${ids} title="Unflag (sorted it out)">✓ Sorted</button></span>` : ''}
+    </div>`;
+  };
+  const body = [...groups.values()].sort((a, b) => (a.term ? 1 : 0) - (b.term ? 1 : 0) || a.rank - b.rank).map(g => `
+    <section class="panel flag-course" style="--c:${g.c.color || 'var(--gold)'}">
+      <div class="section-head"><h2>${esc(g.c.name || 'Other')}</h2>${g.term ? `<span class="small muted">${esc(g.term)}</span>` : ''}
+        <span class="spacer"></span><span class="flag-badge">⚑ ${g.items.reduce((a, x) => a + x.qs.length, 0)}</span></div>
+      ${g.items.sort((a, b) => String(a.p.number || '').localeCompare(String(b.p.number || ''), undefined, { numeric: true })).map(x => `
+        <div class="flag-paper"><div class="small"><strong>${paperLabel(x.p)}</strong>${x.p.pdfName ? ` <span class="muted">· ${esc(x.p.pdfName)}</span>` : ''}</div>
+        ${x.qs.map(q => qRow(x, q)).join('')}</div>`).join('')}
+    </section>`).join('');
+  return head + body;
+}
+function flagTarget(el) {
+  const t = el.dataset.t;
+  const papers = t === '' || t == null ? (liveState || state).papers : (((liveState || state).archive || [])[+t] || {}).data?.papers || [];
+  const p = papers.find(x => x.id === el.dataset.id);
+  return p ? { p, q: p.questions[+el.dataset.i] } : {};
+}
+
 /* ---------------- terms: archive & start a new term ----------------
    "Start a new term" files the whole current term away (read-only) in state.archive, carries over
    what's unfinished, and clears the timetable ready for the new term's spreadsheets. */
@@ -2626,7 +2698,7 @@ const setMini = on => {
 try { if (localStorage.getItem(SIDE_KEY)) setMini(true); } catch { /* ignore */ }
 $('#sideCollapse').addEventListener('click', () => { setMini(!document.body.classList.contains('side-mini')); if (currentTab() === 'timetable') fitTimetable(); });
 
-const VIEWS = { holiday: viewVacation, pastpapers: viewPastPapers, search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
+const VIEWS = { flagged: viewFlagged, holiday: viewVacation, pastpapers: viewPastPapers, search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
 const currentTab = () => { const h = location.hash.slice(1) === 'vacation' ? 'holiday' : location.hash.slice(1); return VIEWS[h] ? h : 'dashboard'; };
 
 function render() {
@@ -2655,6 +2727,7 @@ function updateBadges() {
   try {
     set('papers', state.papers.filter(p => !isDone(p) && p.due && p.due.slice(0, 10) <= soon).length, 'papers due in the next 3 days');
     set('labs', allLabs().filter(l => l.cls === 'todo' || l.preDue).length, 'labs needing attention');
+    set('flagged', flaggedCount(), 'flagged questions to revise');
     set('lectures', backlogGroups().reduce((a, g) => a + g.items.length + g.notes.length, 0), 'lectures (and review notes) to catch up on');
   } catch { /* never let badges break the page */ }
 }
@@ -2803,6 +2876,23 @@ document.addEventListener('click', e => {
         n.done = true; n.doneOn = iso(today()); save(); render();
         toast('✓ Reviewed', 'Undo', () => { n.done = false; delete n.doneOn; save(); render(); });
       },
+      'flag-open': () => {
+        const { p } = flagTarget(actEl); if (!p || !p.pdf) return;
+        openDoc({ path: p.pdf, sha: p.pdfSha, title: [p.number, p.title].filter(Boolean).join(' — '), sub: course(p.courseId).name,
+          fileName: p.pdfName, paperId: actEl.dataset.t === '' ? p.id : undefined, page: +actEl.dataset.page || 1 });
+      },
+      'flag-note': () => {
+        const { p, q } = flagTarget(actEl); if (!q) return;
+        openForm({ title: `${[p.number, p.title].filter(Boolean).join(' — ')} · Q${+actEl.dataset.i + 1}`, values: { note: q.note || '' },
+          fields: [{ key: 'note', label: 'What was tricky?', full: true, placeholder: 'e.g. part (c), unsure why the friction acts that way' }],
+          onSave: v => { q.note = v.note; } });
+      },
+      'flag-clear': () => {
+        const { q } = flagTarget(actEl); if (!q) return;
+        q.flag = false; save(); render();
+        toast('✓ Unflagged', 'Undo', () => { q.flag = true; save(); render(); });
+      },
+      'flag-print': () => window.print(),
       'pp-open': () => openCC(actEl.dataset.id),
       'new-term': () => openRollover(),
       'view-archive': () => viewArchive(+actEl.dataset.i),
