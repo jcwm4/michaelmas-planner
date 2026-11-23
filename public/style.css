@@ -884,3 +884,33 @@ body.hdr-hidden .topbar { transform: translateY(calc(-100% - 4px)); }
 .plan-warn { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 10%, var(--panel)); font-size: 13px; }
 .plan-warn ul { margin: 4px 0 6px; padding-left: 18px; }
 .plan-toggle { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+
+/* ---------- labs: pre-work → lab → write-up progress line ---------- */
+.lab-flow { display: grid; grid-template-columns: repeat(3, minmax(70px, 1fr)); position: relative; flex: 1 1 260px; max-width: 360px; }
+.lab-flow::before { content: ""; position: absolute; left: 16.6%; right: 16.6%; top: 8px; height: 2px; background: var(--line); }
+.lf-step { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.lf-step i { width: 18px; height: 18px; border-radius: 50%; box-sizing: border-box; border: 2px solid var(--line); background: var(--panel); }
+.lf-step b { font-size: 12px; font-weight: 600; margin-top: 3px; }
+.lf-step em { font-style: normal; font-size: 11px; color: var(--muted); }
+.lf-step.done i { background: var(--ok); border-color: var(--ok); }
+.lf-step.done i::after { content: "✓"; display: block; color: #fff; font-size: 11px; line-height: 14px; text-align: center; font-style: normal; }
+.lf-step.due i { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, var(--panel)); }
+.lf-step.due em { color: var(--warn); font-weight: 600; }
+.lf-step.todo i { border-color: var(--gold); }
+.lf-step.none i { background: var(--line-soft); border-style: dashed; }
+.lf-step.none b, .lf-step.none em { color: var(--muted); font-weight: 400; }
+
+/* ---------- supervisions: a timeline down the page ---------- */
+.sup-list { display: flex; flex-direction: column; gap: 12px; position: relative; padding-left: 34px; }
+.sup-list::before { content: ""; position: absolute; left: 11px; top: 14px; bottom: 14px; width: 2px; background: linear-gradient(var(--gold), var(--line)); border-radius: 2px; }
+.sup-card { position: relative; border-top: 1px solid var(--line); border-left: 4px solid var(--c); }
+.sup-card::before {
+  content: ""; position: absolute; left: -32px; top: 16px; width: 16px; height: 16px; border-radius: 50%; box-sizing: border-box;
+  border: 3px solid var(--c); background: var(--bg);
+}
+.sup-card.past::before, .sup-card.done::before { background: var(--c); }
+.sup-card.done::after { content: "✓"; position: absolute; left: -28px; top: 14px; color: #fff; font-size: 11px; font-weight: 700; }
+.sup-card.next { box-shadow: 0 0 0 2px var(--gold), var(--shadow-lift); }
+.sup-card.next::before { box-shadow: 0 0 0 4px color-mix(in srgb, var(--gold) 35%, transparent); }
+.sup-card .when { font: 600 17px/1.3 var(--serif); }
+.sup-card:hover { transform: translateX(2px); }

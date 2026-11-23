@@ -1516,6 +1516,7 @@ function viewSupervisions() {
   const from = ui.showPast ? windowStart(1) : t;
   const to = addDays(windowStart(+s.numWeeks), 6);
   const sups = occurrences(from, to).filter(o => o.e.type === 'supervision');
+  let shownNext = '';
   const supCards = sups.map(o => {
     const c = course(o.e.courseId);
     const key = occKey(o);
@@ -1524,7 +1525,7 @@ function viewSupervisions() {
     const linked = papersForSup(o);
     const tasks = linkedTasks('sup', key), openT = tasks.filter(x => !x.done);
     const note = state.supNotes[key];
-    return `<div class="sup-card ${past ? 'past' : ''}" style="--c:${c.color}" data-sup="${esc(key)}">
+    return `<div class="sup-card ${past ? 'past' : ''} ${done ? 'done' : ''} ${!past && !shownNext ? (shownNext = 'next') : ''}" style="--c:${c.color}" data-sup="${esc(key)}">
       <div class="row"><span class="when">${fmtDate(o.d)}, ${esc(o.e.start)}</span><span class="spacer"></span><span class="muted small">Week ${termWeek(o.d)}</span>${o.d <= t ? supDoneBtn(key) : ''}</div>
       <div>${esc(o.e.title)}</div>
       <div class="muted small">${[c.name, o.e.location, o.e.who].filter(Boolean).map(esc).join(' · ')}</div>
@@ -1646,12 +1647,25 @@ function dashLabs() {
   </section>`;
 }
 
+/** A lab's three stages, pre-work → lab → write-up, drawn as a small progress line. */
+function labFlow(l) {
+  const st = (label, state, cls) => `<span class="lf-step ${cls}"><i></i><b>${label}</b><em>${esc(state)}</em></span>`;
+  const pre = l.rec.pre === 'required' ? st('Pre-work', l.isPast ? 'was needed' : 'to do', 'due')
+    : l.rec.pre === 'done' ? st('Pre-work', 'done', 'done') : st('Pre-work', 'none', 'none');
+  const lab = l.isPast ? st('Lab', fmtDate(l.o.d), 'done') : l.started ? st('Lab', 'now', 'due') : st('Lab', fmtDate(l.o.d), 'todo');
+  const wr = l.rec.status === 'done' ? st('Write-up', 'nothing more', 'done')
+    : l.rec.status === 'followup' ? (l.tasks.length && !l.open.length ? st('Write-up', 'done', 'done') : st('Write-up', l.open.length ? `due ${fmtDate(parseISO(l.open[0].due || l.o.date))}` : 'add a deadline', 'due'))
+    : l.isPast ? st('Write-up', 'not marked', 'due') : st('Write-up', 'after the lab', 'todo');
+  return `<div class="lab-flow" aria-label="Pre-work, lab, write-up">${pre}${lab}${wr}</div>`;
+}
+
 function labRow(l) {
   const { o } = l;
   return `<div class="lab-row ${l.cls}" data-lab="${esc(l.key)}">
     <div class="lab-when"><strong>${fmtDate(o.d)}</strong><div class="small muted">${esc(o.e.start)}–${esc(o.e.end)}</div></div>
     <div class="lab-main"><div class="ev-title">${esc(o.e.title)}</div>
       <div class="small muted">${esc(o.e.location || '')}${o.e.link ? ' · ' + extLink(o.e.link) : ''}${l.rec.notes ? ' · 📝 notes' : ''}${l.tasks.length ? ` · ${l.tasks.length - l.open.length}/${l.tasks.length} tasks done` : ''}</div></div>
+    ${labFlow(l)}
     ${l.preDue ? '<span class="lab-pill warn">📋 Pre-work to do</span>' : l.rec.pre === 'done' && !l.isPast ? '<span class="lab-pill ok">✓ Pre-work done</span>' : ''}
     <span class="lab-pill ${l.cls}">${esc(l.label)}</span>
     ${l.started || l.rec.status ? labButtons(l.key, l.rec.status) : labPreButtons(l.key, l.rec.pre)}
