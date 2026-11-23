@@ -2143,37 +2143,52 @@ function dayRuler() {
   </section>`;
 }
 
-/** The visible week as a loaded beam: deadlines are point loads sized by the work left; underneath, planned study per day. */
+/** How full each day of the visible week is: timetabled time (overlaps counted once) plus the study the plan
+    has booked, as a stacked bar per day, with that day's deadlines underneath. */
 function weekLoad(start) {
-  const cfg = planCfg(), days = [], plan = buildPlan();
+  const plan = buildPlan(), ts = iso(today()), nm = nowMin();
+  const occ = occurrences(start, addDays(start, 6));
+  const days = [];
   for (let i = 0; i < 7; i++) {
     const d = addDays(start, i), ds = iso(d);
+    const spans = occ.filter(o => o.date === ds && o.e.type !== 'deadline')
+      .map(o => [toMin(o.e.start), Math.max(toMin(o.e.end), toMin(o.e.start))]).sort((x, y) => x[0] - y[0]);
+    let busy = 0, cs = -1, ce = -1;
+    for (const [s0, e0] of spans) { if (s0 > ce) { busy += Math.max(0, ce - cs); cs = s0; ce = e0; } else ce = Math.max(ce, e0); }
+    busy += Math.max(0, ce - cs);
+    const study = plan.blocks.filter(x => x.date === ds).reduce((a, x) => a + x.end - x.start, 0);
     const due = [];
     for (const p of state.papers) if (!isDone(p) && p.due && p.due.startsWith(ds)) {
       const left = (p.questions || []).filter(q => !q.done).length;
-      if (left) due.push({ label: shortPaper(p), mins: left * (+cfg.perQ || 25) });
+      due.push({ label: shortPaper(p), time: p.due.slice(11, 16), note: left ? `${left} question${left === 1 ? '' : 's'} left` : 'ready' });
     }
-    for (const t of state.tasks) if (!t.done && t.due === ds && !(t.mins !== undefined && t.mins !== '' && +t.mins <= 0)) due.push({ label: t.title, mins: +t.mins || +cfg.taskMin });
-    const load = due.reduce((a, x) => a + x.mins, 0);
-    const study = plan.blocks.filter(b => b.date === ds).reduce((a, b) => a + b.end - b.start, 0);
-    days.push({ d, ds, due, load, study });
+    for (const t of state.tasks) if (!t.done && t.due === ds) due.push({ label: t.title, time: t.time || '', note: '' });
+    due.sort((x, y) => (x.time || '99').localeCompare(y.time || '99'));
+    days.push({ d, ds, busy, study, total: busy + study, due, past: ds < ts });
   }
-  const maxLoad = Math.max(60, ...days.map(x => x.load)), maxStudy = Math.max(60, ...days.map(x => x.study));
-  const peak = days.reduce((a, x) => x.load > a.load ? x : a, days[0]);
-  if (!days.some(x => x.load || x.study)) return '';
-  const h = m => (m / 60).toFixed(m % 60 ? 1 : 0).replace(/\.0$/, '');
+  if (!days.some(x => x.total || x.due.length)) return '';
+  const max = Math.max(8 * 60, ...days.map(x => x.total));
+  const busiest = days.filter(x => !x.past).reduce((a, x) => (!a || x.total > a.total ? x : a), null);
+  const h = m => { const v = Math.round(m / 30) / 2; return v ? `${v} h` : '0 h'; };
+  const nDue = days.reduce((a, x) => a + (x.past ? 0 : x.due.filter(u => x.ds > ts || !u.time || toMin(u.time) > nm).length), 0);
   const cols = days.map(x => {
-    const isPeak = x === peak && x.load > 0, len = x.load ? 26 + Math.round(x.load / maxLoad * 84) : 0;
-    return `<div class="wk-day ${isPeak ? 'peak' : ''} ${x.ds === iso(today()) ? 'today' : ''}">
-      <div class="wk-load">${x.load ? `<span class="wk-val">${h(x.load)} h</span><span class="wk-arrow" style="height:${len}px"></span>` : ''}</div>
-      <div class="wk-study">${x.study ? `<span style="height:${Math.max(4, Math.round(x.study / maxStudy * 56))}px"></span>` : ''}</div>
+    const hot = x === busiest && x.total > 0;
+    const pct = m => `${(m / max * 100).toFixed(1)}%`;
+    return `<div class="wk-day ${hot ? 'hot' : ''} ${x.ds === ts ? 'today' : ''} ${x.past ? 'past' : ''}">
+      <div class="wk-total">${x.total ? h(x.total) : ''}</div>
+      <div class="wk-col" title="${DAYS_LONG[x.d.getDay()]}: ${h(x.busy)} timetabled${x.study ? `, ${h(x.study)} study planned` : ''}">
+        ${x.study ? `<span class="wk-st" style="height:${pct(x.study)}"></span>` : ''}${x.busy ? `<span class="wk-tt" style="height:${pct(x.busy)}"></span>` : ''}
+      </div>
       <div class="wk-name">${DAYS[x.d.getDay()]} ${x.d.getDate()}</div>
-      <div class="wk-sub">${x.study ? `${h(x.study)} h planned` : '&nbsp;'}</div>
+      <div class="wk-due">${x.due.slice(0, 3).map(u => `<div title="${esc(u.label)}${u.note ? ' — ' + esc(u.note) : ''}"><b>${esc(u.time || 'due')}</b> ${esc(u.label)}</div>`).join('')}${x.due.length > 3 ? `<div class="muted">and ${x.due.length - 3} more</div>` : ''}</div>
     </div>`;
   }).join('');
-  const tip = peak.load ? `${DAYS_LONG[peak.d.getDay()]} carries the most: ${peak.due.map(x => esc(x.label)).join(', ')}.` : 'No deadlines this week.';
-  return `<section class="week-load" aria-label="Load on this week">
-    <div class="wk-head"><h2>Load on your week</h2><span>Arrows are deadlines, sized by the work left. Bars below are study time the plan has booked. ${tip}</span></div>
+  const summary = busiest && busiest.total
+    ? `Busiest day ahead: <strong>${DAYS_LONG[busiest.d.getDay()]} ${busiest.d.getDate()}</strong>, ${h(busiest.total)} (${h(busiest.busy)} timetabled${busiest.study ? `, ${h(busiest.study)} study` : ''}).`
+    : 'Nothing left this week.';
+  return `<section class="week-load" aria-label="How full each day of this week is">
+    <div class="wk-head"><h2>How full your week is</h2><span>${summary} ${nDue ? `${nDue} deadline${nDue === 1 ? '' : 's'} still to come.` : ''}</span></div>
+    <div class="wk-legend"><span><i class="wk-tt"></i>timetabled</span><span><i class="wk-st"></i>study the plan has booked</span><span><b>15:00</b> deadline</span></div>
     <div class="wk-beam">${cols}</div>
   </section>`;
 }
