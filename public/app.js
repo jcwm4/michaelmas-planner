@@ -1560,7 +1560,7 @@ function viewPapers() {
       <td><strong>${esc(p.number)}</strong>${p.title ? `<div class="small muted">${esc(p.title)}</div>` : ''}</td>
       <td>${releaseCell(p)}</td>
       <td>${fmtDue(p.due)}<div class="small">${relDue(p.due, done)}</div></td>
-      <td>${qStrip(p)}${(() => { const n = linkedTasks('paper', p.id).filter(x => !x.done).length; return n ? `<div class="small muted">☐ ${n} task${n > 1 ? 's' : ''}</div>` : ''; })()}</td>
+      <td>${qStrip(p)}${done ? '' : planSlotTag('paper', p.id)}${(() => { const n = linkedTasks('paper', p.id).filter(x => !x.done).length; return n ? `<div class="small muted">☐ ${n} task${n > 1 ? 's' : ''}</div>` : ''; })()}</td>
       <td><select data-action="paper-status" data-id="${p.id}" class="status-${p.status}">
         ${Object.entries(STATUS).map(([k, l]) => `<option value="${k}"${k === p.status ? ' selected' : ''}>${l}</option>`).join('')}</select></td>
       <td class="paper-acts">${doneBtn(p)}${pdfBtn(p)}<button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></td>
@@ -1588,6 +1588,7 @@ function taskRow(t) {
     <span class="title" data-task="${t.id}">${esc(t.title)}</span>
     ${t.link ? `<span class="chip link-chip" data-link-kind="${t.link.kind}" data-link-key="${esc(t.link.key)}" title="Open">${esc(linkLabel(t))}</span>` : ''}
     ${t.courseId ? `<span class="row small muted" style="gap:4px"><i class="dot" style="background:${c.color}"></i>${esc(c.name)}</span>` : ''}
+    ${t.done ? '' : planSlotTag('task', t.id)}
     <span class="small" style="min-width:110px;text-align:right">${t.rolling && !t.due ? '<span class="muted">🔁 when free</span>' : ''}${t.due ? fmtDate(parseISO(t.due)) + (t.time ? ', ' + esc(t.time) : '') + ' ' + relDue(t.due, t.done) : ''}</span>
   </div>`;
 }
@@ -1648,12 +1649,34 @@ function dashLabs() {
   </section>`;
 }
 
+/** When the study plan next works on something: "Tue 16:50" (or '' if not booked in the next fortnight). */
+function planSlot(kind, id) {
+  const b = buildPlan().blocks.find(x => x.kind === kind && x.id === id);
+  if (!b) return '';
+  const d = parseISO(b.date), when = b.date === iso(today()) ? 'Today' : b.date === iso(addDays(today(), 1)) ? 'Tomorrow' : DAYS[d.getDay()] + ' ' + d.getDate();
+  return `${when} ${hhmm(b.start)}`;
+}
+const planSlotTag = (kind, id) => { const w = planSlot(kind, id); return w ? `<span class="plan-slot" title="Booked by the study plan">▦ ${esc(w)}</span>` : ''; };
+
+/** A lab's three stages, pre-work → lab → write-up, drawn as a small process line. */
+function labFlow(l) {
+  const st = (label, state, cls) => `<span class="lf-step ${cls}"><i></i><b>${label}</b><em>${esc(state)}</em></span>`;
+  const pre = l.rec.pre === 'required' ? st('Pre-work', l.isPast ? 'was needed' : 'to do', 'due')
+    : l.rec.pre === 'done' ? st('Pre-work', 'done', 'done') : st('Pre-work', 'none', 'none');
+  const lab = l.isPast ? st('Lab', fmtDate(l.o.d), 'done') : l.started ? st('Lab', 'now', 'due') : st('Lab', fmtDate(l.o.d), 'todo');
+  const wr = l.rec.status === 'done' ? st('Write-up', 'nothing more', 'done')
+    : l.rec.status === 'followup' ? (l.tasks.length && !l.open.length ? st('Write-up', 'done', 'done') : st('Write-up', l.open.length ? `due ${fmtDate(parseISO(l.open[0].due || l.o.date))}` : 'add a deadline', 'due'))
+    : l.isPast ? st('Write-up', 'not marked', 'due') : st('Write-up', 'after', 'todo');
+  return `<div class="lab-flow">${pre}${lab}${wr}</div>`;
+}
+
 function labRow(l) {
   const { o } = l;
   return `<div class="lab-row ${l.cls}" data-lab="${esc(l.key)}">
     <div class="lab-when"><strong>${fmtDate(o.d)}</strong><div class="small muted">${esc(o.e.start)}–${esc(o.e.end)}</div></div>
     <div class="lab-main"><div class="ev-title">${esc(o.e.title)}</div>
       <div class="small muted">${esc(o.e.location || '')}${o.e.link ? ' · ' + extLink(o.e.link) : ''}${l.rec.notes ? ' · 📝 notes' : ''}${l.tasks.length ? ` · ${l.tasks.length - l.open.length}/${l.tasks.length} tasks done` : ''}</div></div>
+    ${labFlow(l)}
     ${l.preDue ? '<span class="lab-pill warn">📋 Pre-work to do</span>' : l.rec.pre === 'done' && !l.isPast ? '<span class="lab-pill ok">✓ Pre-work done</span>' : ''}
     <span class="lab-pill ${l.cls}">${esc(l.label)}</span>
     ${l.started || l.rec.status ? labButtons(l.key, l.rec.status) : labPreButtons(l.key, l.rec.pre)}
@@ -2140,17 +2163,17 @@ function weekLoad(start) {
   const h = m => (m / 60).toFixed(m % 60 ? 1 : 0).replace(/\.0$/, '');
   const cols = days.map(x => {
     const isPeak = x === peak && x.load > 0, len = x.load ? 26 + Math.round(x.load / maxLoad * 84) : 0;
-    return `<div class="wl-day ${isPeak ? 'peak' : ''} ${x.ds === iso(today()) ? 'today' : ''}">
-      <div class="wl-load">${x.load ? `<span class="wl-val">${h(x.load)} h</span><span class="wl-arrow" style="height:${len}px"></span>` : ''}</div>
-      <div class="wl-study">${x.study ? `<span style="height:${Math.max(4, Math.round(x.study / maxStudy * 56))}px"></span>` : ''}</div>
-      <div class="wl-name">${DAYS[x.d.getDay()]} ${x.d.getDate()}</div>
-      <div class="wl-sub">${x.study ? `${h(x.study)} h planned` : '&nbsp;'}</div>
+    return `<div class="wk-day ${isPeak ? 'peak' : ''} ${x.ds === iso(today()) ? 'today' : ''}">
+      <div class="wk-load">${x.load ? `<span class="wk-val">${h(x.load)} h</span><span class="wk-arrow" style="height:${len}px"></span>` : ''}</div>
+      <div class="wk-study">${x.study ? `<span style="height:${Math.max(4, Math.round(x.study / maxStudy * 56))}px"></span>` : ''}</div>
+      <div class="wk-name">${DAYS[x.d.getDay()]} ${x.d.getDate()}</div>
+      <div class="wk-sub">${x.study ? `${h(x.study)} h planned` : '&nbsp;'}</div>
     </div>`;
   }).join('');
   const tip = peak.load ? `${DAYS_LONG[peak.d.getDay()]} carries the most: ${peak.due.map(x => esc(x.label)).join(', ')}.` : 'No deadlines this week.';
   return `<section class="week-load" aria-label="Load on this week">
-    <div class="wl-head"><h2>Load on your week</h2><span>Arrows are deadlines, sized by the work left. Bars below are study time the plan has booked. ${tip}</span></div>
-    <div class="wl-beam">${cols}</div>
+    <div class="wk-head"><h2>Load on your week</h2><span>Arrows are deadlines, sized by the work left. Bars below are study time the plan has booked. ${tip}</span></div>
+    <div class="wk-beam">${cols}</div>
   </section>`;
 }
 

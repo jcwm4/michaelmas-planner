@@ -93,6 +93,15 @@ deadline, and warns when something won't fit. Blocks show dashed on the Timetabl
 to hide them) and in the dashboard's **Study plan** panel. It's worked out afresh each time, so it
 re-plans as you tick things off. Hours, breaks and timings are in Settings → Study plan.
 
+## Design
+
+Selwyn maroon and gold on drafting paper, with Barlow Condensed for headings and numbers and Source
+Sans 3 for text (both SIL Open Font License, self-hosted in `public/fonts/`, so no outside requests).
+The dashboard shows today on a scale ruler, the timetable a "load on your week" diagram, Lectures a
+numbered scale per course and Labs a pre-work → lab → write-up line. The previous design is kept as the
+git tag `backup-pre-redesign`; to go back, run `git revert` on the redesign commits (or
+`git checkout backup-pre-redesign -- public` and commit) and push.
+
 ## Flagged questions
 
 The **⚑ Flagged** page lists every examples-paper question you've flagged (this term and archived
