@@ -265,6 +265,7 @@ function migrate() {
   for (const k of ['courses', 'events', 'papers', 'tasks']) if (!Array.isArray(state[k])) state[k] = d[k];
   for (const k of ['labs', 'supNotes', 'lectures', 'pastPapers']) if (!state[k] || typeof state[k] !== 'object' || Array.isArray(state[k])) state[k] = {};
   if (!Array.isArray(state.lecNotes)) state.lecNotes = [];
+  if (!state.revise || typeof state.revise !== 'object') state.revise = {};   // revise item key -> { seen, step, streak }
   if (!state.supDone || typeof state.supDone !== 'object') state.supDone = {};   // supervision session key -> date marked done   // things to review from specific lectures
   for (const p of state.papers) ensureQuestions(p);
   // lecture catch-up starts from the current week (change it in Settings)
@@ -2512,26 +2513,151 @@ function setPP(id, patch) {
   if (Object.keys(r).length) state.pastPapers[id] = { ...r, updated: iso(today()) }; else delete state.pastPapers[id];
   save();
 }
+/* ---------------- revise: flagged questions, review notes and past papers on a forgetting curve ----------------
+   Each item remembers when you last went over it (state.revise). Its memory halves over a review interval
+   (3, then 7, then 21 days); once it drops below half it's due. "Still unsure" resets it to 3 days;
+   "Got it" lengthens the interval, and twice in a row takes it off the list. */
+const REVISE_STEPS = [3, 7, 21];
+function reviseItems() {
+  const now = today(), out = [], R = state.revise || {};
+  const add = (key, base, x) => {
+    const rec = R[key] || {}, step = Math.min(rec.step || 0, REVISE_STEPS.length - 1), iv = REVISE_STEPS[step];
+    const seen = rec.seen || base || iso(now);
+    const t = Math.max(0, diffDays(parseISO(seen), now)), u = t / iv;
+    out.push({ key, ...x, rec, step, iv, t, u, r: Math.pow(0.5, u), due: u >= 1, inDays: Math.max(0, Math.ceil(iv - t)) });
+  };
+  for (const p of state.papers) (p.questions || []).forEach((q, i) => {
+    if (!q.flag) return;
+    add(`q:${p.id}:${i}`, (p.due || '').slice(0, 10) || p.issued, { kind: 'q', p, i, courseId: p.courseId,
+      title: `${shortPaper(p)}, Q${i + 1}`, short: `${(course(p.courseId).name || '').replace(/^\d\w{1,3}\s+/, '').split(' ')[0]} P${(p.number || '').replace(/\D/g, '')} Q${i + 1}`,
+      detail: q.note ? `Your note: ${q.note}` : q.done ? 'Attempted, flagged to redo' : 'Not attempted yet' });
+  });
+  for (const n of openLecNotes()) add(`n:${n.id}`, n.added || n.date, { kind: 'n', n, courseId: n.courseId,
+    title: n.text, short: n.text.length > 22 ? n.text.slice(0, 21) + '…' : n.text,
+    detail: `Lecture note: ${n.title || ''}${n.date ? `, ${fmtDate(parseISO(n.date))}` : ''}` });
+  for (const [id, r] of Object.entries(state.pastPapers || {})) if (r.revisit) {
+    const [, , code, year] = id.split('-');
+    add(`pp:${id}`, r.updated, { kind: 'pp', id, courseId: (CC_MODULES.find(m => m.code === code) || { courses: [''] }).courses[0],
+      title: `${code} Tripos ${year}`, short: `${code} ${year}`, detail: r.note ? `Your note: ${r.note}` : 'Past paper marked to revisit' });
+  }
+  return out.sort((a, b) => b.u - a.u);
+}
+function reviseCurve(items) {
+  const U = 2.2, X = u => 80 + Math.min(u, U) / U * 880, Y = r => 30 + (1 - r) * 240;
+  let d = '';
+  for (let k = 0; k <= 44; k++) { const u = k / 20; d += `${k ? 'L' : 'M'}${X(u).toFixed(1)} ${Y(Math.pow(0.5, u)).toFixed(1)} `; }
+  // items at nearly the same point share one numbered dot, with their names listed beside it
+  const pts = items.map(x => ({ x, cx: X(x.u), cy: Y(Math.max(Math.pow(0.5, U), x.r)) })).sort((p, q) => p.cx - q.cx);
+  const groups = [];
+  for (const pt of pts) {
+    const g = groups.find(g => Math.abs(g.cx - pt.cx) < 26 && Math.abs(g.cy - pt.cy) < 26);
+    if (g) g.items.push(pt.x); else groups.push({ cx: pt.cx, cy: pt.cy, items: [pt.x] });
+  }
+  const dots = groups.map((g, gi) => {
+    const due = g.items.some(x => x.due), n = g.items.length, right = g.cx < 640;
+    const names = g.items.slice(0, n > 5 ? 4 : 5).map(x => x.short).concat(n > 5 ? [`and ${n - 4} more`] : []);
+    const above = g.cy > 200, y0 = above ? g.cy - 14 - (names.length - 1) * 19 : g.cy + (gi % 2 ? 24 : -6);
+    const tx = (g.cx + (right ? 16 : -16)).toFixed(1);
+    return `<g class="rv-dot ${due ? 'due' : ''}" data-action="rv-open" data-key="${esc(g.items[0].key)}">
+      <circle cx="${g.cx.toFixed(1)}" cy="${g.cy.toFixed(1)}" r="${n > 1 ? 12 : due ? 8 : 7}"></circle>${n > 1 ? `<text class="rv-n" x="${g.cx.toFixed(1)}" y="${(g.cy + 5).toFixed(1)}" text-anchor="middle">${n}</text>` : ''}
+      <text x="${tx}" y="${y0.toFixed(1)}" text-anchor="${right ? 'start' : 'end'}">${names.map((t, k) => `<tspan x="${tx}" dy="${k ? 19 : 0}">${esc(t)}</tspan>`).join('')}</text>
+      <title>${g.items.map(x => esc(x.title)).join('\n')}</title></g>`;
+  }).join('');
+  return `<svg class="rv-curve" viewBox="0 0 1000 320" role="img" aria-label="Forgetting curve: ${items.filter(x => x.due).length} items below the review line">
+    <rect x="81" y="150" width="879" height="120" class="rv-zone"></rect>
+    <path d="M80 30 V270 H960" class="rv-axis"></path>
+    <path d="M80 150 H960" class="rv-line"></path>
+    <text x="92" y="172" class="rv-line-lab">below this line, review it</text>
+    <path d="${d}" class="rv-path"></path>
+    <text x="70" y="36" text-anchor="end" class="rv-ax">sure</text><text x="70" y="274" text-anchor="end" class="rv-ax">fading</text>
+    <text x="80" y="296" class="rv-ax">just reviewed</text><text x="${X(1)}" y="296" text-anchor="middle" class="rv-ax">review due</text><text x="960" y="296" text-anchor="end" class="rv-ax">well overdue</text>
+    ${dots}</svg>`;
+}
+function viewRevise() {
+  if (state.searchIndex && !searchIdx) loadSearchIndex().then(() => { if (currentTab() === 'revise') render(); }).catch(() => {});
+  const items = reviseItems(), now = items.filter(x => x.due), later = items.filter(x => !x.due).sort((a, b) => a.inDays - b.inDays);
+  const n = k => items.filter(x => x.kind === k).length;
+  const row = x => { const c = course(x.courseId); return `<div class="rv-row">
+      <span class="rv-sw" style="background:${c.color}"></span>
+      <div class="rv-main"><strong>${esc(x.title)}</strong><div class="small muted">${esc(x.detail)}</div></div>
+      <div class="rv-acts">
+        <button type="button" class="btn sm" data-action="rv-open" data-key="${esc(x.key)}">${x.kind === 'q' ? `Open${(() => { const pg = questionPage(x.p, x.i + 1); return pg ? ` at p.${pg}` : ''; })()}` : x.kind === 'pp' ? 'Open paper' : 'Open note'}</button>
+        <button type="button" class="btn sm" data-action="rv-shaky" data-key="${esc(x.key)}">Still unsure</button>
+        <button type="button" class="btn sm primary" data-action="rv-got" data-key="${esc(x.key)}">Got it</button>
+      </div></div>`; };
+  return `<div class="section-head"><h2>Revise</h2><span class="muted">${items.length} things to go back over${now.length ? `, ${now.length} fading now` : ''}</span></div>
+    <div class="rv-stats">
+      <div><b>${n('q')}</b><span>flagged questions</span></div><div><b>${n('n')}</b><span>lecture review notes</span></div>
+      <div><b>${n('pp')}</b><span>past papers to revisit</span></div><div><b>${now.length}</b><span>due for review now</span></div></div>
+    ${items.length ? `<section class="panel rv-panel"><div class="section-head"><h2>What's fading</h2><span class="small muted">Each dot is something you flagged. The longer since you last went over it, the further it slides down. Tap a dot to open it.</span></div>${reviseCurve(items)}</section>` : ''}
+    <div class="rv-cols">
+      <section class="rv-col"><div class="section-head"><h2>Review now</h2></div>${now.length ? now.map(row).join('') : '<div class="empty">Nothing has faded yet.</div>'}</section>
+      <section class="rv-col"><div class="section-head"><h2>Coming back later</h2></div>
+        ${later.length ? later.map(x => `<div class="rv-later"><b>${x.inDays}</b><div><strong>${esc(x.title)}</strong><div class="small muted">${x.inDays === 1 ? 'tomorrow' : `in ${x.inDays} days`} · ${esc(x.detail)}</div></div></div>`).join('') : '<div class="empty">Nothing waiting.</div>'}
+        <p class="small muted">"Still unsure" brings an item back in 3 days, then 7, then 21. "Got it" twice in a row takes it off the list (and unflags it). Flag questions on any examples paper, add notes on Lectures, or mark past papers to revisit.</p></section>
+    </div>
+    <div class="rv-record">${viewFlagged()}</div>`;
+}
+function reviseAct(act, key) {
+  const x = reviseItems().find(i => i.key === key); if (!x) return;
+  state.revise = state.revise || {};
+  if (act === 'open') {
+    if (x.kind === 'q' && x.p.pdf) openDoc({ path: x.p.pdf, sha: x.p.pdfSha, title: [x.p.number, x.p.title].filter(Boolean).join(' — '), sub: course(x.p.courseId).name, fileName: x.p.pdfName, paperId: x.p.id, page: questionPage(x.p, x.i + 1) || 1 });
+    else if (x.kind === 'q') openPaperForm(x.p);
+    else if (x.kind === 'n') openLecNote(x.n);
+    else openCC(x.id);
+    return;
+  }
+  const before = state.revise[key] ? { ...state.revise[key] } : null;
+  const restore = () => { if (before) state.revise[key] = before; else delete state.revise[key]; };
+  if (act === 'shaky') {
+    state.revise[key] = { seen: iso(today()), step: 0, streak: 0 };
+    save(); render(); toast(`Back in ${REVISE_STEPS[0]} days`, 'Undo', () => { restore(); save(); render(); });
+    return;
+  }
+  const streak = (x.rec.streak || 0) + 1;
+  if (streak >= 2) {   // twice in a row: off the list
+    let undo;
+    if (x.kind === 'q') { const q = x.p.questions[x.i]; q.flag = false; undo = () => { q.flag = true; }; }
+    else if (x.kind === 'n') { x.n.done = true; x.n.doneOn = iso(today()); undo = () => { x.n.done = false; delete x.n.doneOn; }; }
+    else { setPP(x.id, { revisit: false }); undo = () => setPP(x.id, { revisit: true }); }
+    delete state.revise[key];
+    save(); render(); toast('✓ Sorted, off the list', 'Undo', () => { undo(); restore(); save(); render(); });
+  } else {
+    const step = Math.min(x.step + 1, REVISE_STEPS.length - 1);
+    state.revise[key] = { seen: iso(today()), step, streak };
+    save(); render(); toast(`✓ Back in ${REVISE_STEPS[step]} days`, 'Undo', () => { restore(); save(); render(); });
+  }
+}
+
+/* ---------------- past papers: years against papers ---------------- */
 function viewPastPapers() {
   const f = ui.ppFilter || 'all';
-  const card = m => {
-    const color = course(m.courses[0]).color;
-    const recs = CC_YEARS.map(y => ({ y, id: ccId(m.code, y), r: ppRec(ccId(m.code, y)) }));
-    const done = recs.filter(x => x.r.status === 'done').length, tried = recs.filter(x => x.r.status === 'attempted').length;
-    const shown = recs.filter(x => f === 'all' || (f === 'todo' ? x.r.status !== 'done' : f === 'revisit' ? x.r.revisit : x.r.status));
-    return `<section class="panel pp-card" style="--c:${color}">
-      <div class="lec-head"><div><div class="small muted">${m.code}</div><h2>${esc(m.name)}</h2></div><span class="spacer"></span>
-        <a class="btn sm" href="${CC}/ia/${m.code}/?kind=tripos" target="_blank" rel="noopener noreferrer">CamCribs ↗</a></div>
-      <div class="small muted" style="margin-bottom:8px">${done}/${CC_YEARS.length} done${tried ? ` · ${tried} attempted` : ''}</div>
-      <div class="pp-years">${shown.map(x => `<button type="button" class="pp-year ${x.r.status || ''} ${x.r.revisit ? 'revisit' : ''}" data-action="pp-open" data-id="${x.id}"
-          title="${m.code} ${x.y} — ${PP_STATUS[x.r.status || '']}${x.r.revisit ? ' · ⚑ revisit' : ''}${x.r.note ? '\n' + esc(x.r.note) : ''}">${x.y}${x.r.revisit ? '<span class="pp-flag">⚑</span>' : ''}</button>`).join('') || '<span class="small muted">None here.</span>'}</div>
-    </section>`;
-  };
-  return `<div class="section-head"><h2>Past papers</h2>
-      <select data-action="pp-filter">${[['all', 'All years'], ['todo', 'Not done yet'], ['started', 'Attempted or done'], ['revisit', '⚑ To revisit']].map(([k, l]) => `<option value="${k}"${k === f ? ' selected' : ''}>${l}</option>`).join('')}</select>
-      <span class="spacer"></span><span class="small muted">Part IA Tripos papers from <a href="${CC}" target="_blank" rel="noopener noreferrer">CamCribs</a> · tap a year to open it</span></div>
-    <p class="small muted" style="margin-top:0"><span class="pp-key done">Done</span> <span class="pp-key attempted">Attempted</span> <span class="pp-key">Not started</span> · ⚑ = revisit</p>
-    <div class="grid-cards">${CC_MODULES.map(card).join('')}</div>`;
+  const years = ui.ppOld ? CC_YEARS : CC_YEARS.filter(y => y >= 2012);
+  const recs = CC_MODULES.map(m => ({ m, cells: years.map(y => ({ y, id: ccId(m.code, y), r: ppRec(ccId(m.code, y)) })) }));
+  const match = r => f === 'all' || (f === 'todo' ? r.status !== 'done' : f === 'revisit' ? r.revisit : r.status);
+  const all = CC_MODULES.flatMap(m => CC_YEARS.map(y => ppRec(ccId(m.code, y))));
+  const nDone = all.filter(r => r.status === 'done').length, nRev = all.filter(r => r.revisit).length;
+  // suggest: the paper you've touched least recently, its newest year not done
+  const last = m => CC_YEARS.map(y => ppRec(ccId(m.code, y)).updated || '').sort().pop() || '';
+  const sm = CC_MODULES.slice().sort((a, b) => last(a).localeCompare(last(b)))[0];
+  const sy = CC_YEARS.find(y => ppRec(ccId(sm.code, y)).status !== 'done');
+  const sl = last(sm);
+  const cell = (m, x) => `<button type="button" class="pp-cell ${x.r.status || ''} ${x.r.revisit ? 'revisit' : ''} ${match(x.r) ? '' : 'dim'}" data-action="pp-open" data-id="${x.id}"
+      title="${m.code} ${x.y} — ${PP_STATUS[x.r.status || '']}${x.r.revisit ? ' · to revisit' : ''}${x.r.note ? '\n' + esc(x.r.note) : ''}" aria-label="${m.code} ${x.y}: ${PP_STATUS[x.r.status || '']}${x.r.revisit ? ', to revisit' : ''}">${x.r.revisit ? 'redo' : x.r.status === 'done' ? '✓' : x.r.status === 'attempted' ? '½' : ''}</button>`;
+  return `<div class="section-head"><h2>Past papers</h2><span class="muted">${nDone} of ${CC_MODULES.length * CC_YEARS.length} done${nRev ? `, ${nRev} to revisit` : ''}</span><span class="spacer"></span>
+      <select data-action="pp-filter">${[['all', 'All years'], ['todo', 'Not done yet'], ['started', 'Attempted or done'], ['revisit', 'To revisit']].map(([k, l]) => `<option value="${k}"${k === f ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      <a class="btn" href="${CC}" target="_blank" rel="noopener noreferrer">CamCribs ↗</a></div>
+    <div class="pp-grid-wrap"><table class="pp-grid">
+      <thead><tr><th></th>${years.map(y => `<th>${y}</th>`).join('')}</tr></thead>
+      <tbody>${recs.map(({ m, cells }) => `<tr><th scope="row"><a href="${CC}/ia/${m.code}/?kind=tripos" target="_blank" rel="noopener noreferrer">${m.code}</a><span>${esc(m.name)}</span></th>${cells.map(x => `<td>${cell(m, x)}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>
+    <div class="pp-foot">
+      <div class="pp-legend"><span><i class="pp-cell done">✓</i>done</span><span><i class="pp-cell attempted">½</i>attempted</span><span><i class="pp-cell revisit">redo</i>revisit</span><span><i class="pp-cell"></i>not started</span>
+        <button type="button" class="btn sm" data-action="pp-old">${ui.ppOld ? 'Hide years before 2012' : `Show older years (back to ${CC_YEARS[CC_YEARS.length - 1]})`}</button></div>
+      ${sy ? `<div class="pp-suggest"><span>Suggested next: <strong>${sm.code} ${sy}</strong>, ${esc(sm.name)}.${sl ? ` You last worked on a ${sm.code} paper on ${fmtDate(parseISO(sl))}.` : ` You haven't started a ${sm.code} paper yet.`}</span>
+        <button type="button" class="btn sm" data-action="pp-open" data-id="${ccId(sm.code, sy)}">Open ${sy}</button></div>` : ''}
+    </div>`;
 }
 function closeCC() { const v = $('#ccView'); if (v) v.remove(); document.body.classList.remove('pdf-open'); render(); }
 function openCC(id) {
@@ -2860,6 +2986,8 @@ function viewVacation() {
       <p class="small muted">Holiday: ${v.offRanges.map(([a, b]) => `${fmtDate(parseISO(a))} – ${fmtDate(parseISO(b))}`).join(', ')}. After changing days, press Rebuild plan to re-spread the work.</p>
     </details>
     ${all.length ? '' : `<div class="panel"><p>Build a week-by-week plan from what's left: <strong>${lectureBacklog().length}</strong> lectures to catch up, <strong>${state.papers.filter(p => !isDone(p)).reduce((a, p) => a + p.total - p.done, 0)}</strong> examples questions (plus ⚑ flagged ones to redo), and past papers — one per module each full week, newest first.</p></div>`}
+    ${all.length ? `<div class="vac-strip" aria-label="Progress through the vacation">${weeks.map((w, i) => { const it = all.filter(x => x.week === w.key), d = it.filter(vacItemDone).length;
+      return `<div class="${w.work ? '' : 'off'}"><span class="vs-bar"><i style="width:${it.length ? Math.round(d / it.length * 100) : 0}%"></i></span><span class="small muted">Week ${i + 1}: ${w.work ? `${d}/${it.length} done` : 'off'}</span></div>`; }).join('')}</div>` : ''}
     <div class="vac-weeks">${weeks.map((w, i) => vacWeekCard(w, i + 1)).join('')}</div>`;
 }
 /** Dashboard panel while the holiday is on (from a week before it starts). */
@@ -2979,8 +3107,9 @@ const setMini = on => {
 try { if (localStorage.getItem(SIDE_KEY)) setMini(true); } catch { /* ignore */ }
 $('#sideCollapse').addEventListener('click', () => { setMini(!document.body.classList.contains('side-mini')); if (currentTab() === 'timetable') fitTimetable(); });
 
-const VIEWS = { flagged: viewFlagged, holiday: viewVacation, pastpapers: viewPastPapers, search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
-const currentTab = () => { const h = location.hash.slice(1) === 'vacation' ? 'holiday' : location.hash.slice(1); return VIEWS[h] ? h : 'dashboard'; };
+const VIEWS = { revise: viewRevise, flagged: viewRevise, holiday: viewVacation, pastpapers: viewPastPapers, search: viewSearch, dashboard: viewDashboard, timetable: viewTimetable, supervisions: viewSupervisions, papers: viewPapers, labs: viewLabs, lectures: viewLectures, databooks: viewDatabooks, tasks: viewTasks, settings: viewSettings };
+const TAB_ALIAS = { vacation: 'holiday', flagged: 'revise' };
+const currentTab = () => { let h = location.hash.slice(1); h = TAB_ALIAS[h] || h; return VIEWS[h] ? h : 'dashboard'; };
 
 function render() {
   const tab = currentTab();
@@ -3008,7 +3137,7 @@ function updateBadges() {
   try {
     set('papers', state.papers.filter(p => !isDone(p) && p.due && p.due.slice(0, 10) <= soon).length, 'papers due in the next 3 days');
     set('labs', allLabs().filter(l => l.cls === 'todo' || l.preDue).length, 'labs needing attention');
-    set('flagged', flaggedCount(), 'flagged questions to revise');
+    set('revise', reviseItems().filter(x => x.due).length, 'things fading, due for review');
     set('lectures', backlogGroups().reduce((a, g) => a + g.items.length + g.notes.length, 0), 'lectures (and review notes) to catch up on');
   } catch { /* never let badges break the page */ }
 }
@@ -3158,6 +3287,10 @@ document.addEventListener('click', e => {
         n.done = true; n.doneOn = iso(today()); save(); render();
         toast('✓ Reviewed', 'Undo', () => { n.done = false; delete n.doneOn; save(); render(); });
       },
+      'rv-open': () => reviseAct('open', actEl.dataset.key),
+      'rv-shaky': () => reviseAct('shaky', actEl.dataset.key),
+      'rv-got': () => reviseAct('got', actEl.dataset.key),
+      'pp-old': () => { ui.ppOld = !ui.ppOld; render(); },
       'flag-open': () => {
         const { p } = flagTarget(actEl); if (!p || !p.pdf) return;
         openDoc({ path: p.pdf, sha: p.pdfSha, title: [p.number, p.title].filter(Boolean).join(' — '), sub: course(p.courseId).name,
