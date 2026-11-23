@@ -1,9 +1,9 @@
 /* Service worker: keeps the app itself available offline, and shows push notifications.
    App files: network first (so updates arrive straight away), falling back to the saved copy
    when there's no signal. PDFs and your data are saved separately by the app. */
-const SHELL = 'planner-shell-v2';
+const SHELL = 'planner-shell-v1';
 const PRECACHE = ['./', 'index.html', 'app.js', 'style.css', 'manifest.json', 'selwyn-arms.svg', 'icon-180.png', 'icon-192.png',
-  'vendor/pdfjs/pdf.min.mjs', 'fonts/barlow-condensed-500.woff2', 'fonts/barlow-condensed-600.woff2', 'fonts/barlow-condensed-700.woff2', 'fonts/source-sans-3.woff2', 'vendor/pdfjs/pdf.worker.min.mjs'];
+  'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs'];
 
 self.addEventListener('install', e => {
   self.skipWaiting();
