@@ -1,0 +1,3 @@
+Barlow Condensed (c) 2017 The Barlow Project Authors (https://github.com/jpt/barlow)
+Source Sans 3 (c) 2010-2020 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
+Both are licensed under the SIL Open Font License, Version 1.1: https://openfontlicense.org

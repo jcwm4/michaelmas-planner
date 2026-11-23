@@ -1326,6 +1326,7 @@ function viewDashboard() {
       <div class="muted">${esc(state.settings.termName)} · ${termText}</div></div>
     <div class="term-progress"><div class="bar"><span style="width:${pct}%"></span></div><div class="week-dots">${dots}</div></div>
   </div>
+  ${dayRuler()}
   ${noEvents ? `<div class="panel" style="margin-bottom:16px"><strong>Your timetable is empty.</strong>
     <span class="muted">Add events in the <a href="#timetable">Timetable</a> tab (click any slot), or import your lecture/lab and supervision spreadsheets.</span></div>` : ''}
   <div class="grid-cards">
@@ -1453,6 +1454,7 @@ function viewTimetable() {
     ${viewSwitch}
     <button class="btn primary" data-action="add-event">+ Add<span class="hide-narrow"> event</span></button>
   </div>
+  ${dayMode ? '' : weekLoad(start)}
   <div class="legend" style="margin-bottom:6px">${legend}</div>
   <p class="muted small hide-narrow" style="margin:0 0 10px">Click an empty slot to add an event; click an event to open it. ⏰ boxes are task deadlines (any task with a time).</p>
   <div class="tt-wrap ${dayMode ? 'day-mode' : ''}" style="--hour:${HOUR_PX}px">
@@ -1829,6 +1831,7 @@ function viewLectures() {
               <span class="muted">${x.left} lecture${x.left === 1 ? '' : 's'} left this term</span>`
           : `<span class="muted">${x.events.length ? 'No more lectures this term' : 'Not lectured this term'}</span>`}
       </div>
+      ${lecScale(x)}
       <div class="doc-list">${x.docs.length ? x.docs.map(docRow).join('') : '<div class="empty small">No handouts yet.</div>'}</div>
       <div class="row">${uploadBtn('handout', x.g, '📎 Add handout')}</div>
     </section>`;
@@ -2079,6 +2082,93 @@ function planSettings() {
       </div>
       <p class="muted small">Study blocks go in the gaps between timetabled events, up to 90 minutes each. A task's own "time needed" overrides the default; set it to 0 to leave a task out (e.g. a meeting).</p>
     </section>`;
+}
+
+/* ---------------- redesign pieces: day scale, week load, lecture scales ---------------- */
+/** Today as an engineer's scale: timetabled events and study-plan blocks laid on a ruler with a "now" line. */
+function dayRuler() {
+  const t = today(), ts = iso(t);
+  const occ = occurrences(t, t).concat(planOccurrences(t, t))
+    .sort((a, b) => toMin(a.e.start) - toMin(b.e.start));
+  if (!occ.length) return '';
+  const S = Math.min(8, ...occ.map(o => Math.floor(toMin(o.e.start) / 60)));
+  const E = Math.max(20, ...occ.map(o => Math.ceil(toMin(o.e.end) / 60)));
+  const span = (E - S) * 60, pct = m => `${((m - S * 60) / span * 100).toFixed(2)}%`;
+  const laneEnd = [], nm = nowMin();
+  const blocks = occ.map(o => {
+    const s0 = toMin(o.e.start), e0 = Math.max(toMin(o.e.end), s0 + 20);
+    let lane = laneEnd.findIndex(x => x <= s0);
+    if (lane < 0) { lane = laneEnd.length; laneEnd.push(0); }
+    laneEnd[lane] = e0 + 2;
+    const c = course(o.e.courseId);
+    const past = e0 <= nm || (o.e.type === 'supervision' && supIsDone(occKey(o))) || (o.e.type === 'lecture' && lecReviewed(o));
+    return `<div class="dr-ev ${esc(o.e.type)} ${past ? 'past' : ''}" ${evAttr(o)} style="--c:${c.color};left:${pct(s0)};width:calc(${((e0 - s0) / span * 100).toFixed(2)}% - 3px);top:${lane * 60}px"
+      title="${esc(`${o.e.title}\n${o.e.start}–${o.e.end}`)}"><div class="t">${esc(o.e.title.replace(/^[✓⏰] /, ''))}</div><div class="m">${esc(o.e.start)}–${esc(o.e.end)}${o.e.location ? ' ' + esc(o.e.location) : ''}</div></div>`;
+  }).join('');
+  const lanes = Math.max(1, laneEnd.length), axis = lanes * 60 + 8;
+  let ticks = '';
+  for (let m = S * 60; m <= E * 60; m += 30) {
+    const whole = m % 60 === 0;
+    ticks += `<span class="dr-tick ${whole ? '' : 'half'}" style="left:${pct(m)};top:${axis}px"></span>`
+      + (whole ? `<span class="dr-lab" style="left:${pct(m)};top:${axis + 18}px">${pad(m / 60)}</span>` : '');
+  }
+  const now = nm >= S * 60 && nm <= E * 60
+    ? `<span class="dr-now" style="left:${pct(nm)};height:${axis + 2}px"><b>${hhmm(nm)}</b></span>` : '';
+  return `<section class="panel day-ruler" aria-label="Today on a scale">
+    <div class="dr-scroll"><div class="dr-inner" style="height:${axis + 44}px">${blocks}<span class="dr-axis" style="top:${axis}px"></span>${ticks}${now}</div></div>
+  </section>`;
+}
+
+/** The visible week as a loaded beam: deadlines are point loads sized by the work left; underneath, planned study per day. */
+function weekLoad(start) {
+  const cfg = planCfg(), days = [], plan = buildPlan();
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(start, i), ds = iso(d);
+    const due = [];
+    for (const p of state.papers) if (!isDone(p) && p.due && p.due.startsWith(ds)) {
+      const left = (p.questions || []).filter(q => !q.done).length;
+      if (left) due.push({ label: shortPaper(p), mins: left * (+cfg.perQ || 25) });
+    }
+    for (const t of state.tasks) if (!t.done && t.due === ds && !(t.mins !== undefined && t.mins !== '' && +t.mins <= 0)) due.push({ label: t.title, mins: +t.mins || +cfg.taskMin });
+    const load = due.reduce((a, x) => a + x.mins, 0);
+    const study = plan.blocks.filter(b => b.date === ds).reduce((a, b) => a + b.end - b.start, 0);
+    days.push({ d, ds, due, load, study });
+  }
+  const maxLoad = Math.max(60, ...days.map(x => x.load)), maxStudy = Math.max(60, ...days.map(x => x.study));
+  const peak = days.reduce((a, x) => x.load > a.load ? x : a, days[0]);
+  if (!days.some(x => x.load || x.study)) return '';
+  const h = m => (m / 60).toFixed(m % 60 ? 1 : 0).replace(/\.0$/, '');
+  const cols = days.map(x => {
+    const isPeak = x === peak && x.load > 0, len = x.load ? 26 + Math.round(x.load / maxLoad * 84) : 0;
+    return `<div class="wl-day ${isPeak ? 'peak' : ''} ${x.ds === iso(today()) ? 'today' : ''}">
+      <div class="wl-load">${x.load ? `<span class="wl-val">${h(x.load)} h</span><span class="wl-arrow" style="height:${len}px"></span>` : ''}</div>
+      <div class="wl-study">${x.study ? `<span style="height:${Math.max(4, Math.round(x.study / maxStudy * 56))}px"></span>` : ''}</div>
+      <div class="wl-name">${DAYS[x.d.getDay()]} ${x.d.getDate()}</div>
+      <div class="wl-sub">${x.study ? `${h(x.study)} h planned` : '&nbsp;'}</div>
+    </div>`;
+  }).join('');
+  const tip = peak.load ? `${DAYS_LONG[peak.d.getDay()]} carries the most: ${peak.due.map(x => esc(x.label)).join(', ')}.` : 'No deadlines this week.';
+  return `<section class="week-load" aria-label="Load on this week">
+    <div class="wl-head"><h2>Load on your week</h2><span>Arrows are deadlines, sized by the work left. Bars below are study time the plan has booked. ${tip}</span></div>
+    <div class="wl-beam">${cols}</div>
+  </section>`;
+}
+
+/** Every lecture of a course this term as a numbered scale: caught up, to catch up, still to come. */
+function lecScale(x) {
+  const s = state.settings;
+  if (!x.events.length) return '';
+  const all = occurrences(parseISO(s.week1Start), addDays(windowStart(+s.numWeeks + 1), 6)).filter(o => x.events.includes(o.e));
+  if (!all.length) return '';
+  const behind = new Set(lectureBacklog().map(occKey)), t = iso(today()), nm = nowMin();
+  const cells = all.map((o, i) => {
+    const future = o.date > t || (o.date === t && toMin(o.e.end) > nm);
+    const st = future ? 'future' : behind.has(occKey(o)) ? 'behind' : 'done';
+    return `<span class="ls-cell ${st}" title="Lecture ${i + 1}, ${fmtDate(o.d)}${st === 'behind' ? ' (to catch up)' : st === 'future' ? '' : ' (caught up)'}"><i></i><b>${i + 1}</b></span>`;
+  }).join('');
+  const nb = all.filter(o => behind.has(occKey(o))).length;
+  return `<div class="lec-scale" aria-label="Lectures this term">${cells}</div>
+    <div class="small muted">${all.length - x.left} given${nb ? `, <strong class="ls-behind">${nb} to catch up</strong>` : ''}${x.left ? `, ${x.left} to come` : ''}</div>`;
 }
 
 function catchUpPanel({ compact = false } = {}) {
