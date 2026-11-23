@@ -1396,11 +1396,10 @@ function viewTimetable() {
     const d = addDays(start, i), ds = iso(d);
     const dayOcc = occ.filter(o => o.date === ds);
     const laid = layout(dayOcc);
-    const evs = laid.map(({ o, s: sm, en, col, n }) => {
+    const evs = laid.map(({ o, s: sm, en, left, width, narrow }) => {
       const c = course(o.e.courseId);
       const top = (sm - h0 * 60) / 60 * HOUR_PX;
       const h = Math.max((en - sm) / 60 * HOUR_PX - 2, 18);
-      const w = 100 / n;
       // how many text lines fit: give the title up to 3, then time/location, then person
       const avail = Math.max(1, Math.floor((h - 5) / LINE_PX));
       const meta = [`${o.e.start}–${o.e.end}`, o.e.location, o.e.who].filter(Boolean);
@@ -1410,13 +1409,13 @@ function viewTimetable() {
       const tip = [o.e.title, `${o.e.start}–${o.e.end}`, o.e.location, o.e.who, course(o.e.courseId).name].filter(Boolean).join('\n');
       const labSt = o.e.type === 'lab' ? labInfo(o) : null;
       const isDone = o.e.done || (labSt && labSt.cls === 'ok') || (o.e.type === 'supervision' && supIsDone(occKey(o)));
-      return `<div class="tt-ev ${o.e.type} ${isDone ? 'is-done' : ''} ${labSt && labSt.cls === 'warn' ? 'needs-follow' : ''} ${labSt && labSt.cls === 'live' ? 'is-live' : ''} ${labSt && labSt.preDue ? 'needs-pre' : ''}" ${evAttr(o)} style="--c:${c.color};top:${top}px;height:${h}px;left:calc(${col * w}% + 2px);width:calc(${w}% - 4px)"
-        title="${esc(tip)}">
+      return `<div class="tt-ev ${o.e.type} ${isDone ? 'is-done' : ''} ${labSt && labSt.cls === 'warn' ? 'needs-follow' : ''} ${labSt && labSt.cls === 'live' ? 'is-live' : ''} ${labSt && labSt.preDue ? 'needs-pre' : ''} ${narrow ? 'narrow' : ''}" ${evAttr(o)} style="--c:${c.color};top:${top}px;height:${h}px;left:calc(${left} + 2px);width:calc(${width} - ${narrow ? 2 : 4}px)"
+        title="${esc(tip)}">${narrow ? `<span class="tt-pin" aria-label="${esc(o.e.title)}">⏰</span></div>` : `
         ${o.e.link ? extLink(o.e.link, '↗', 'tt-link') : ''}
         <div class="t" style="-webkit-line-clamp:${titleLines}">${isDone && labSt ? '✓ ' : labSt && labSt.cls === 'warn' ? '✎ ' : ''}${esc(o.e.title)}</div>
         ${labSt && labSt.cls === 'live' ? '<div class="live-tag">● In progress</div>' : ''}${labSt && labSt.preDue && labSt.cls !== 'live' ? '<div class="pre-tag">📋 Pre-work</div>' : ''}
         ${metaShown.map(x => `<div class="m">${esc(x)}</div>`).join('')}
-      </div>`;
+      </div>`}`;
     }).join('');
     const nowLine = ds === todayStr && nowMin() >= h0 * 60 && nowMin() <= h1 * 60
       ? `<div class="tt-now" style="top:${(nowMin() - h0 * 60) / 60 * HOUR_PX}px"></div>` : '';
@@ -1468,9 +1467,23 @@ function viewTimetable() {
 function layout(list) {
   const res = [];
   let cluster = [], clusterEnd = -1, cols = [];
+  const NW = 26;   // a column holding only task deadlines becomes a slim strip, so the events beside it keep their width
   const flush = () => {
     const n = Math.max(...cluster.map(c => c.col)) + 1;
-    cluster.forEach(c => { c.n = n; });
+    const narrow = new Set();
+    for (let k = 0; k < n; k++) if (cluster.filter(c => c.col === k).every(c => c.o.e.type === 'deadline')) narrow.add(k);
+    if (narrow.size === n) narrow.clear();
+    const m = n - narrow.size, pos = [];
+    let lp = 0, lx = 0;
+    for (let k = 0; k < n; k++) {
+      if (narrow.has(k)) { pos[k] = [lp, lx, 0, NW]; lx += NW; }
+      else { const wp = 100 / m, wx = -NW * narrow.size / m; pos[k] = [lp, lx, wp, wx]; lp += wp; lx += wx; }
+    }
+    cluster.forEach(c => {
+      const [a, b, wp, wx] = pos[c.col];
+      c.n = n; c.narrow = narrow.has(c.col);
+      c.left = `(${a.toFixed(3)}% + ${b.toFixed(1)}px)`; c.width = `(${wp.toFixed(3)}% + ${wx.toFixed(1)}px)`;
+    });
     cluster = []; cols = [];
   };
   for (const o of list) {
