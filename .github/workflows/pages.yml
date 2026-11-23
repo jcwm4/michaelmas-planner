@@ -27,8 +27,8 @@ jobs:
           short="${V:0:8}"
           sed -i "s#href=\"style.css\"#href=\"style.css?v=$short\"#; s#src=\"app.js\"#src=\"app.js?v=$short\"#" public/index.html
           grep -q "app.js?v=$short" public/index.html
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: public
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
