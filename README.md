@@ -84,6 +84,15 @@ ticked as caught up. Tap **📝** on a lecture, or **Add review note**, to note 
 go over, such as "displacement diagrams" or one derivation. A note stays on the list after you tick
 its lecture off, until you tick the note itself. Open notes also appear in the daily and weekly emails.
 
+## Study plan
+
+The planner fits your outstanding work into the free gaps of each day: examples questions still
+unticked (25 min each), tasks (30 min, or the task's own "time needed"; 0 leaves it out), lectures to
+catch up (45 min) and review notes. It goes soonest deadline first, never books anything after its
+deadline, and warns when something won't fit. Blocks show dashed on the Timetable (untick "Study plan"
+to hide them) and in the dashboard's **Study plan** panel. It's worked out afresh each time, so it
+re-plans as you tick things off. Hours, breaks and timings are in Settings → Study plan.
+
 ## Flagged questions
 
 The **⚑ Flagged** page lists every examples-paper question you've flagged (this term and archived

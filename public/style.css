@@ -871,3 +871,16 @@ body.hdr-hidden .topbar { transform: translateY(calc(-100% - 4px)); }
   .flag-course { break-inside: avoid; }
   .layout, main { display: block !important; margin: 0 !important; padding: 0 !important; }
 }
+
+/* ---------- study plan ---------- */
+.tt-ev.plan {
+  border: 1.5px dashed var(--c); border-left-width: 1.5px; box-shadow: none;
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c) 7%, var(--panel)) 0 7px, color-mix(in srgb, var(--c) 13%, var(--panel)) 7px 14px);
+}
+.tt-ev.plan .t { font-weight: 600; }
+.plan-bar { background: repeating-linear-gradient(180deg, var(--c) 0 5px, transparent 5px 8px) !important; }
+.plan-panel li[data-plan] { cursor: pointer; }
+.plan-late { color: var(--danger); font-weight: 600; font-size: 12px; }
+.plan-warn { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 10%, var(--panel)); font-size: 13px; }
+.plan-warn ul { margin: 4px 0 6px; padding-left: 18px; }
+.plan-toggle { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }

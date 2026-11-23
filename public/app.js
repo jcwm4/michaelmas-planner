@@ -747,6 +747,7 @@ function openTaskForm(t) {
       { key: 'time', label: 'Time', hint: 'optional — shows it on the calendar', type: 'time' },
       { key: 'courseId', label: 'Course', type: 'select', options: courseOptions() },
       { key: 'priority', label: 'Priority', type: 'select', options: Object.entries(PRIORITY) },
+      { key: 'mins', label: 'Time needed (min)', type: 'number', hint: 'for the study plan; 0 = leave it out' },
       { key: 'rolling', label: '🔁 Spare-time task', hint: 'no date — listed in the daily email until done', type: 'checkbox' },
       { key: 'done', label: 'Done', type: 'checkbox' },
       { key: 'notes', label: 'Notes', type: 'textarea', full: true },
@@ -791,6 +792,7 @@ function findOcc(key) {
   return e && date ? { e, date, d: parseISO(date) } : null;
 }
 function evAttr(o) {
+  if (o.e.plan) return `data-plan="${esc(o.e.plan)}"`;
   if (o.e.taskId) return `data-task="${o.e.taskId}"`;
   if (o.e.type === 'supervision') return `data-sup="${esc(occKey(o))}"`;
   if (o.e.type === 'lab') return `data-lab="${esc(occKey(o))}"`;
@@ -1328,6 +1330,7 @@ function viewDashboard() {
     <span class="muted">Add events in the <a href="#timetable">Timetable</a> tab (click any slot), or import your lecture/lab and supervision spreadsheets.</span></div>` : ''}
   <div class="grid-cards">
     ${dashVacation()}
+    ${planPanel()}
     <section class="panel">
       <div class="section-head"><h2>Today</h2><span class="spacer"></span><a href="#timetable" class="small">Full week →</a></div>
       ${todayOcc.length ? `<ul class="ev-list">${todayOcc.map(o => evRow(o)).join('')}</ul>` : '<div class="empty">Nothing timetabled today.</div>'}
@@ -1375,7 +1378,8 @@ function viewTimetable() {
   const start = dayMode ? parseISO(ui.day) : windowStart(ui.week);
   const end = dayMode ? start : addDays(start, 6);
   const nDays = dayMode ? 1 : 7;
-  const occ = occurrences(start, end);
+  const occ = occurrences(start, end).concat(planOccurrences(start, end))
+    .sort((a, b) => a.date.localeCompare(b.date) || toMin(a.e.start) - toMin(b.e.start));
   let h0 = +s.dayStart, h1 = +s.dayEnd;
   for (const o of occ) {
     h0 = Math.min(h0, Math.floor(toMin(o.e.start) / 60));
@@ -1445,6 +1449,7 @@ function viewTimetable() {
   return `
   <div class="tt-toolbar">${nav}
     <span class="spacer"></span>
+    <label class="small muted plan-toggle"><input type="checkbox" data-action="toggle-plan" ${ui.hidePlan ? '' : 'checked'}> Study plan</label>
     ${viewSwitch}
     <button class="btn primary" data-action="add-event">+ Add<span class="hide-narrow"> event</span></button>
   </div>
@@ -1715,6 +1720,7 @@ function viewSettings() {
         <input type="text" value="${esc(c.name)}" data-course-name="${c.id}">
         <button class="btn sm danger" data-action="del-course" data-id="${c.id}">✕</button></div>`).join('')}</div>
     </section>
+    ${planSettings()}
     ${liveState ? '' : termsPanel()}
     <section class="panel">
       <h2>Offline</h2>
@@ -1941,6 +1947,140 @@ function openLecNote(note, key) {
     onDelete: note ? () => { state.lecNotes = state.lecNotes.filter(n => n !== note); } : null,
   });
 }
+/* ---------------- study plan: fit outstanding work into the free gaps of each day ----------------
+   Worked out afresh on every render from what's still to do, so it re-plans itself as you tick
+   questions, tasks and lectures off. Earliest deadline first; nothing is booked after its deadline. */
+const PLAN_DEFAULTS = { on: true, start: '09:00', end: '21:00', maxMin: 240, perQ: 25, lecMin: 45, noteMin: 20, taskMin: 30, breaks: '12:30-13:30, 18:00-19:00', gap: 10 };
+const planCfg = () => ({ ...PLAN_DEFAULTS, ...(state.settings.plan || {}) });
+const hhmm = m => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+const parseRanges = s => String(s || '').split(/[,;]/).map(x => x.trim().match(/^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})$/)).filter(Boolean).map(m => [toMin(m[1]), toMin(m[2])]);
+function planItems(cfg) {
+  const items = [], now = Date.now();
+  const by = (ds, tm) => parseISO(ds).getTime() + (tm ? toMin(tm) : 23 * 60 + 59) * 60000;
+  for (const p of state.papers) {
+    if (isDone(p) || !Array.isArray(p.questions)) continue;
+    const qs = p.questions.map((q, i) => q.done ? -1 : i).filter(i => i >= 0);
+    if (!qs.length) continue;
+    const dp = dueParts(p.due);
+    items.push({ kind: 'paper', id: p.id, courseId: p.courseId, title: shortPaper(p), qs, unit: +cfg.perQ || 25, mins: qs.length * (+cfg.perQ || 25),
+      deadline: dp ? by(dp.ds, dp.ts) - 60 * 60000 : Infinity, from: p.issued ? parseISO(p.issued).getTime() : 0 });
+  }
+  for (const t of state.tasks) {
+    if (t.done || (t.mins !== undefined && t.mins !== '' && +t.mins <= 0)) continue;
+    items.push({ kind: 'task', id: t.id, courseId: t.courseId, title: t.title, mins: +t.mins || +cfg.taskMin,
+      deadline: t.due ? by(t.due, t.time) : Infinity, from: 0 });
+  }
+  const backlog = lectureBacklog();
+  for (const o of backlog) items.push({ kind: 'lecture', id: occKey(o), courseId: o.e.courseId, title: `Catch up: ${o.e.title}`, mins: +cfg.lecMin,
+    deadline: addDays(o.d, 7).getTime(), soft: true, from: 0 });
+  const listed = new Set(backlog.map(occKey));
+  for (const n of openLecNotes()) if (!listed.has(n.key)) items.push({ kind: 'note', id: n.id, courseId: n.courseId, title: `Review: ${n.text}`, mins: +cfg.noteMin,
+    deadline: Infinity, from: 0 });
+  for (const x of items) {
+    if (x.soft) x.deadline = Math.max(x.deadline, now + 3 * 86400000);   // catch-up waits behind anything due in the next 3 days
+    x.overdue = x.deadline < now && !x.soft;
+    if (x.deadline < now) x.deadline = now;   // overdue or past its soft date: as soon as possible
+  }
+  return items.sort((a, b) => a.deadline - b.deadline || b.mins - a.mins);
+}
+let planCache = null;
+function buildPlan(days = 14) {
+  const cfg = planCfg();
+  const key = JSON.stringify([cfg, state.papers, state.tasks, state.lectures, state.lecNotes, state.events, state.supDone, iso(today()), Math.floor(nowMin() / 15)]);
+  if (planCache && planCache.key === key) return planCache.plan;
+  const plan = { blocks: [], late: [], cfg };
+  if (cfg.on) {
+    const items = planItems(cfg), start = today(), breaks = parseRanges(cfg.breaks), gap = +cfg.gap || 0;
+    const occ = occurrences(start, addDays(start, days - 1)).filter(o => o.e.type !== 'deadline');
+    for (let i = 0; i < days; i++) {
+      const d = addDays(start, i), ds = iso(d), dayMs = d.getTime();
+      let lo = toMin(cfg.start); const hi = toMin(cfg.end);
+      if (i === 0) lo = Math.max(lo, Math.ceil((nowMin() + 5) / 15) * 15);
+      const busy = [...breaks, ...occ.filter(o => o.date === ds).map(o => [toMin(o.e.start) - gap, toMin(o.e.end) + gap])].sort((a, b) => a[0] - b[0]);
+      const slots = []; let cur = lo;
+      for (const [a, b] of busy) { if (a > cur) slots.push([cur, Math.min(a, hi)]); cur = Math.max(cur, b); if (cur >= hi) break; }
+      if (cur < hi) slots.push([cur, hi]);
+      let budget = +cfg.maxMin;
+      for (let [a, b] of slots) {
+        while (b - a >= 20 && budget >= 20) {
+          const room = Math.min(b - a, budget, 90), at = dayMs + a * 60000;
+          let pick = null, len = 0;
+          for (const x of items) {
+            if (x.mins <= 0 || x.from > at) continue;
+            const l = x.kind === 'paper' ? Math.min(x.qs.length, Math.floor(room / x.unit)) * x.unit
+              : x.mins <= room ? x.mins : (x.mins >= 60 && room >= 30 && x.mins - room >= 20) ? room : 0;   // only split long jobs, never into scraps
+            if (!l || (!x.overdue && at + l * 60000 > x.deadline && x.deadline !== Infinity && !x.soft)) continue;
+            pick = x; len = l; break;
+          }
+          if (!pick) break;
+          let label = pick.title;
+          if (pick.kind === 'paper') { const n = len / pick.unit; label = `${pick.title}: ${qRange(pick.qs.slice(0, n))}`; pick.qs = pick.qs.slice(n); }
+          else if (len < pick.mins) label += ' (part)';
+          plan.blocks.push({ date: ds, start: a, end: a + len, kind: pick.kind, id: pick.id, courseId: pick.courseId, label, overdue: pick.overdue });
+          pick.mins -= len; budget -= len; a += len + gap;
+        }
+      }
+    }
+    plan.late = items.filter(x => x.mins > 0 && x.deadline !== Infinity && !x.soft && x.deadline < addDays(start, days).getTime());
+  }
+  planCache = { key, plan };
+  return plan;
+}
+function planOccurrences(from, to) {
+  if (ui.hidePlan) return [];
+  const a = iso(from), b = iso(to);
+  return buildPlan().blocks.filter(x => x.date >= a && x.date <= b).map((x, i) => ({
+    e: { id: `plan-${i}`, plan: `${x.kind}|${x.id}`, title: x.label, type: 'plan', courseId: x.courseId, start: hhmm(x.start), end: hhmm(x.end), location: '', who: 'Study plan' },
+    date: x.date, d: parseISO(x.date) }));
+}
+function openPlanItem(ref) {
+  const i = ref.indexOf('|'), kind = ref.slice(0, i), id = ref.slice(i + 1);
+  if (kind === 'paper') { const p = state.papers.find(x => x.id === id); if (p) openPaperForm(p); }
+  else if (kind === 'task') { const t = state.tasks.find(x => x.id === id); if (t) openTaskForm(t); }
+  else if (kind === 'note') { const n = state.lecNotes.find(x => x.id === id); if (n) openLecNote(n); }
+  else location.hash = '#lectures';
+}
+const fmtMins = m => m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}` : `${m} min`;
+function planPanel() {
+  const plan = buildPlan();
+  if (!plan.cfg.on) return '';
+  const t = iso(today()), tm = iso(addDays(today(), 1));
+  let day = t, blocks = plan.blocks.filter(x => x.date === t);
+  if (!blocks.length) { day = tm; blocks = plan.blocks.filter(x => x.date === tm); }
+  const total = blocks.reduce((a, x) => a + x.end - x.start, 0);
+  const row = x => { const c = course(x.courseId); return `<li data-plan="${esc(x.kind + '|' + x.id)}">
+      <div class="ev-time">${hhmm(x.start)}–${hhmm(x.end)}</div><div class="ev-bar plan-bar" style="--c:${c.color}"></div>
+      <div class="ev-main"><div class="ev-title">${esc(x.label)}${x.overdue ? ' <span class="plan-late">overdue</span>' : ''}</div><div class="ev-meta">${esc(c.name || '')}${c.name ? ' · ' : ''}${fmtMins(x.end - x.start)}</div></div></li>`; };
+  const late = plan.late.map(x => {
+    const fin = new Date(x.deadline + (x.kind === 'paper' ? 3600000 : 0));
+    return `<li>${esc(x.title)}: about ${fmtMins(x.mins)} won't fit before ${fmtDate(fin)}</li>`;
+  }).join('');
+  return `<section class="panel plan-panel">
+    <div class="section-head"><h2>Study plan</h2><span class="muted small">${day === t ? 'today' : 'tomorrow'}${total ? ` · ${fmtMins(total)}` : ''}</span><span class="spacer"></span><a href="#timetable" class="small">On the timetable →</a></div>
+    ${blocks.length ? `<ul class="ev-list">${blocks.map(row).join('')}</ul>` : '<div class="empty">Nothing to fit in. Everything outstanding is done or already planned.</div>'}
+    ${late ? `<div class="plan-warn"><strong>Not enough free time before the deadline:</strong><ul>${late}</ul><span class="small muted">Free up time, raise the daily maximum in Settings → Study plan, or start earlier.</span></div>` : ''}
+    <p class="small muted" style="margin:8px 0 0">Fits examples questions (${plan.cfg.perQ} min each), tasks, lecture catch-up and review notes into free gaps, soonest deadline first. Updates as you tick things off.</p>
+  </section>`;
+}
+function planSettings() {
+  const c = planCfg();
+  return `<section class="panel">
+      <h2>Study plan</h2>
+      <div class="form-grid" id="planForm">
+        <label class="f"><span><input type="checkbox" name="on" ${c.on ? 'checked' : ''}> Plan my free time</span></label>
+        <label class="f">Earliest start<input type="time" name="start" value="${esc(c.start)}"></label>
+        <label class="f">Latest finish<input type="time" name="end" value="${esc(c.end)}"></label>
+        <label class="f">Most study per day (min)<input type="number" name="maxMin" min="30" max="720" step="15" value="${c.maxMin}"></label>
+        <label class="f">Minutes per examples question<input type="number" name="perQ" min="5" max="90" value="${c.perQ}"></label>
+        <label class="f">Minutes to catch up a lecture<input type="number" name="lecMin" min="10" max="120" value="${c.lecMin}"></label>
+        <label class="f">Minutes for a task (default)<input type="number" name="taskMin" min="5" max="240" value="${c.taskMin}"></label>
+        <label class="f">Break between things (min)<input type="number" name="gap" min="0" max="60" value="${c.gap}"></label>
+        <label class="f full">Keep free every day<input type="text" name="breaks" value="${esc(c.breaks)}" placeholder="12:30-13:30, 18:00-19:00"></label>
+      </div>
+      <p class="muted small">Study blocks go in the gaps between timetabled events, up to 90 minutes each. A task's own "time needed" overrides the default; set it to 0 to leave a task out (e.g. a meeting).</p>
+    </section>`;
+}
+
 function catchUpPanel({ compact = false } = {}) {
   const groups = backlogGroups();
   const nLec = groups.reduce((a, g) => a + g.items.length, 0);
@@ -2979,6 +3119,8 @@ document.addEventListener('click', e => {
     const ev = state.events.find(x => x.id === evEl.dataset.ev);
     if (ev) return openEventForm(ev);
   }
+  const planEl = target.closest('[data-plan]');
+  if (planEl) return openPlanItem(planEl.dataset.plan);
   const taskEl = target.closest('[data-task]');
   if (taskEl) {
     const t = state.tasks.find(x => x.id === taskEl.dataset.task);
@@ -3006,6 +3148,7 @@ document.addEventListener('change', e => {
     const task = state.tasks.find(x => x.id === t.dataset.id);
     task.done = t.checked; save(); render();
   } else if (act === 'toggle-past') { ui.showPast = t.checked; render(); }
+  else if (act === 'toggle-plan') { ui.hidePlan = !t.checked; render(); }
   else if (act === 'paper-filter') { ui.paperFilter = t.value; render(); }
   else if (act === 'paper-course') { ui.paperCourse = t.value; render(); }
   else if (act === 'lab-filter') { ui.labFilter = t.value; render(); }
@@ -3018,7 +3161,12 @@ document.addEventListener('change', e => {
     if (v.end < v.start) v.end = v.start;
     save(); render();
   }
-  else if (t.closest('#termForm')) {
+  else if (t.closest('#planForm')) {
+    const v = t.type === 'checkbox' ? t.checked : t.type === 'number' ? +t.value : t.value.trim();
+    if (t.type === 'number' && !t.value) return;
+    state.settings.plan = { ...(state.settings.plan || {}), [t.name]: v };
+    save(); render();
+  } else if (t.closest('#termForm')) {
     const v = t.type === 'number' ? +t.value : t.value;
     if ((t.name === 'week1Start' || t.name === 'lectureTrackFrom') && !t.value) return;
     state.settings[t.name] = v;
