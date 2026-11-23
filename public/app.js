@@ -1527,7 +1527,10 @@ function viewSupervisions() {
   const t = today();
   const s = state.settings;
   const from = ui.showPast ? windowStart(1) : t;
-  const to = addDays(windowStart(+s.numWeeks), 6);
+  // to the end of term, or further if a supervision is booked after it (e.g. Thu/Fri after week 8 ends on the Wednesday)
+  const lastSup = state.events.filter(e => e.type === 'supervision' && e.date).map(e => e.date).sort().pop();
+  const termEnd = addDays(windowStart(+s.numWeeks), 6);
+  const to = lastSup && parseISO(lastSup) > termEnd ? parseISO(lastSup) : termEnd;
   const sups = occurrences(from, to).filter(o => o.e.type === 'supervision');
   let shownNext = '';
   const supCards = sups.map(o => {
