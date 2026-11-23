@@ -264,7 +264,8 @@ function migrate() {
   if (+state.settings.dayEnd === 19) state.settings.dayEnd = 20;   // old default cut off the 7pm slot
   for (const k of ['courses', 'events', 'papers', 'tasks']) if (!Array.isArray(state[k])) state[k] = d[k];
   for (const k of ['labs', 'supNotes', 'lectures', 'pastPapers']) if (!state[k] || typeof state[k] !== 'object' || Array.isArray(state[k])) state[k] = {};
-  if (!Array.isArray(state.lecNotes)) state.lecNotes = [];   // things to review from specific lectures
+  if (!Array.isArray(state.lecNotes)) state.lecNotes = [];
+  if (!state.supDone || typeof state.supDone !== 'object') state.supDone = {};   // supervision session key -> date marked done   // things to review from specific lectures
   for (const p of state.papers) ensureQuestions(p);
   // lecture catch-up starts from the current week (change it in Settings)
   if (!state.settings.lectureTrackFrom) state.settings.lectureTrackFrom = iso(windowStart(weekContaining(today())));
@@ -900,6 +901,7 @@ function openSupModal(key) {
   m.innerHTML = `<div class="modal-card wide" role="dialog" aria-modal="true">
     <div class="row"><h2 style="margin:0">${esc(o.e.title)}</h2><span class="spacer"></span>
       ${o.e.link ? extLink(o.e.link, 'Moodle ↗', 'btn sm') : ''}
+      ${o.d <= today() ? `<button type="button" class="btn sm done-btn ${supIsDone(key) ? 'on' : ''}" data-m="sup-done">${supIsDone(key) ? '✓ Done' : '✓ Mark done'}</button>` : ''}
       <button type="button" class="btn sm" data-m="edit">Edit event</button>
       <button type="button" class="btn sm" data-m="close">Close</button></div>
     <p class="muted">${fmtDate(o.d)}, ${esc(o.e.start)}–${esc(o.e.end)} · ${[c.name, o.e.location, o.e.who].filter(Boolean).map(esc).join(' · ')}</p>
@@ -926,6 +928,7 @@ function openSupModal(key) {
     e.preventDefault();
     const act = b.dataset.m;
     if (act === 'close') closeModal();
+    if (act === 'sup-done') { supDoneToggle(key, !supIsDone(key)); openSupModal(key); }
     if (act === 'edit') { closeModal(); openEventForm(o.e); }
     if (act === 'paper') { const p = state.papers.find(x => x.id === b.dataset.id); closeModal(); openPaperForm(p); }
     if (act === 'add-paper') { closeModal(); openPaperForm(null, { due: `${o.date}T${o.e.start}`, courseId: o.e.courseId || '' }); }
@@ -1276,7 +1279,7 @@ function evRow(o, { showDate = false, extra = '' } = {}) {
   const c = course(o.e.courseId);
   const isToday = o.date === iso(today());
   const nm = nowMin();
-  const past = o.d < today() || (isToday && toMin(o.e.end) <= nm) || (o.e.type === 'lab' && labInfo(o).cls === 'ok');
+  const past = o.d < today() || (isToday && toMin(o.e.end) <= nm) || (o.e.type === 'lab' && labInfo(o).cls === 'ok') || (o.e.type === 'supervision' && supIsDone(occKey(o)));
   const now = !past && isToday && toMin(o.e.start) <= nm && nm < toMin(o.e.end);
   const meta = [TYPES[o.e.type], c.name, o.e.location, o.e.who].filter(Boolean).map(esc).join(' · ');
   return `<li class="${past ? 'past' : ''} ${now ? 'now' : ''}" ${evAttr(o)}>
@@ -1303,7 +1306,7 @@ function viewDashboard() {
   const todayOcc = occurrences(t, t);
   const tmrw = addDays(t, 1), tmrwOcc = occurrences(tmrw, tmrw);
   const sups = occurrences(t, addDays(t, 14)).filter(o => o.e.type === 'supervision'
-    && !(o.date === iso(t) && toMin(o.e.end) <= nowMin()));
+    && !(o.date === iso(t) && toMin(o.e.end) <= nowMin()) && !supIsDone(occKey(o)));
   const papers = state.papers.filter(p => p.status !== 'done' && p.status !== 'submitted').sort(byDue).slice(0, 8);
   const tasks = state.tasks.filter(x => !x.done).sort(byDue).slice(0, 8);
 
@@ -1402,7 +1405,7 @@ function viewTimetable() {
       const metaShown = meta.slice(0, Math.max(0, avail - titleLines));
       const tip = [o.e.title, `${o.e.start}–${o.e.end}`, o.e.location, o.e.who, course(o.e.courseId).name].filter(Boolean).join('\n');
       const labSt = o.e.type === 'lab' ? labInfo(o) : null;
-      const isDone = o.e.done || (labSt && labSt.cls === 'ok');
+      const isDone = o.e.done || (labSt && labSt.cls === 'ok') || (o.e.type === 'supervision' && supIsDone(occKey(o)));
       return `<div class="tt-ev ${o.e.type} ${isDone ? 'is-done' : ''} ${labSt && labSt.cls === 'warn' ? 'needs-follow' : ''} ${labSt && labSt.cls === 'live' ? 'is-live' : ''} ${labSt && labSt.preDue ? 'needs-pre' : ''}" ${evAttr(o)} style="--c:${c.color};top:${top}px;height:${h}px;left:calc(${col * w}% + 2px);width:calc(${w}% - 4px)"
         title="${esc(tip)}">
         ${o.e.link ? extLink(o.e.link, '↗', 'tt-link') : ''}
@@ -1478,6 +1481,30 @@ function layout(list) {
   return res;
 }
 
+/* a supervision can be marked done as soon as it's happened (instead of waiting for the next day);
+   doing so also marks the papers due at it as handed in. Undo puts them back. */
+const supIsDone = key => !!(state.supDone || {})[key];
+const supDoneBtn = key => supIsDone(key)
+  ? `<button type="button" class="btn sm done-btn on" data-action="sup-done" data-key="${esc(key)}" data-on="0" title="Tap to undo">✓ Done</button>`
+  : `<button type="button" class="btn sm done-btn" data-action="sup-done" data-key="${esc(key)}" data-on="1" title="Mark this supervision as done; papers due at it are marked handed in">✓ Mark done</button>`;
+function setSupDone(key, on) {
+  const o = findOcc(key);
+  const papers = o ? papersForSup(o) : [];
+  if (on) {
+    state.supDone[key] = iso(today());
+    for (const p of papers) if (!isDone(p)) { p.undoSup = p.status; p.status = 'submitted'; }
+  } else {
+    delete state.supDone[key];
+    for (const p of papers) if (p.undoSup !== undefined) { p.status = p.undoSup; delete p.undoSup; }
+  }
+  return papers.length;
+}
+
+function supDoneToggle(key, on) {
+  const n = setSupDone(key, on); save(); render();
+  if (on) toast(`✓ Supervision done${n ? ` · ${n} paper${n > 1 ? 's' : ''} marked handed in` : ''}`, 'Undo', () => { setSupDone(key, false); save(); render(); if (modalRefresh) modalRefresh(); });
+}
+
 function viewSupervisions() {
   const t = today();
   const s = state.settings;
@@ -1487,12 +1514,13 @@ function viewSupervisions() {
   const supCards = sups.map(o => {
     const c = course(o.e.courseId);
     const key = occKey(o);
-    const past = o.d < t;
+    const done = supIsDone(key);
+    const past = done || o.d < t || (o.date === iso(t) && toMin(o.e.end) <= nowMin());
     const linked = papersForSup(o);
     const tasks = linkedTasks('sup', key), openT = tasks.filter(x => !x.done);
     const note = state.supNotes[key];
     return `<div class="sup-card ${past ? 'past' : ''}" style="--c:${c.color}" data-sup="${esc(key)}">
-      <div class="row"><span class="when">${fmtDate(o.d)}, ${esc(o.e.start)}</span><span class="spacer"></span><span class="muted small">Week ${termWeek(o.d)}</span></div>
+      <div class="row"><span class="when">${fmtDate(o.d)}, ${esc(o.e.start)}</span><span class="spacer"></span><span class="muted small">Week ${termWeek(o.d)}</span>${o.d <= t ? supDoneBtn(key) : ''}</div>
       <div>${esc(o.e.title)}</div>
       <div class="muted small">${[c.name, o.e.location, o.e.who].filter(Boolean).map(esc).join(' · ')}</div>
       ${linked.map(p => `<div class="sup-paper"><div class="small row" style="gap:6px"><span><strong>${paperLabel(p)}</strong> <span class="status-${p.status}">· ${STATUS[p.status]}</span></span><span class="spacer"></span>${doneBtn(p)}${pdfBtn(p)}<button type="button" class="btn sm edit-btn" data-action="edit-paper" data-id="${p.id}" aria-label="Edit ${paperLabel(p)}">✎ Edit</button></div>${qStrip(p)}${flagList(p)}</div>`).join('')}
@@ -2860,6 +2888,7 @@ document.addEventListener('click', e => {
         const p = !d && state.papers.find(x => x.pdf === path);
         if (d) openDoc({ ...docRef(d), page }); else if (p) openDoc({ path: p.pdf, sha: p.pdfSha, title: [p.number, p.title].filter(Boolean).join(' — '), sub: course(p.courseId).name, fileName: p.pdfName, paperId: p.id, page });
       },
+      'sup-done': () => supDoneToggle(actEl.dataset.key, actEl.dataset.on === '1'),
       'paper-done': () => {
         const p = state.papers.find(x => x.id === actEl.dataset.id);
         if (!p) return;
